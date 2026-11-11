@@ -1,0 +1,82 @@
+# =====================================================================================
+# GOVERNANCE: RBAC (vai trò) + RLS (lọc dòng theo người dùng) + giới hạn chi phí quét.
+# Mọi SQL (do agent sinh hay người dùng gõ) đều bị kiểm tra bằng CODE theo file này trước khi chạy.
+# =====================================================================================
+roles:
+  analyst:
+    label: Analyst (chỉ đọc)
+    statements: [SELECT]               # chỉ đọc
+    schemas: [dw]                      # chỉ truy vấn tầng dw (mart đã làm sạch)
+    deny_sensitivity: [pii, confidential]
+    can_manage_schema: false
+    can_view_all_logs: false
+    cost:
+      warn_bytes: 20_000_000           # > 20 MB: cảnh báo
+      approval_bytes: 60_000_000       # > 60 MB: bắt buộc người dùng duyệt (HITL)
+      max_bytes: 400_000_000           # > 400 MB: chặn
+    max_rows: 5000
+  admin:
+    label: Admin (quản trị schema)
+    statements: [SELECT]               # truy vấn qua agent vẫn chỉ đọc; thay đổi schema qua chức năng quản trị
+    schemas: [dw, stg, raw, ref]
+    deny_sensitivity: []
+    can_manage_schema: true
+    can_view_all_logs: true
+    cost:
+      warn_bytes: 80_000_000
+      approval_bytes: 250_000_000
+      max_bytes: 2_000_000_000
+    max_rows: 20000
+
+# HITL: bảng có số dòng >= large_table_rows được coi là "bảng lớn"; truy vấn chạm bảng lớn và quét
+# nhiều hơn hitl_min_bytes phải được người dùng xem SQL và xác nhận trước khi chạy.
+hitl:
+  large_table_rows: 100000
+  hitl_min_bytes: 15_000_000
+
+users:
+  admin:       {password: admin123,   role: admin,   full_name: "Quản trị dữ liệu"}
+  analyst:     {password: analyst123, role: analyst, full_name: "Chuyên viên phân tích (toàn quốc)"}
+  analyst_bac: {password: analyst123, role: analyst, full_name: "Chuyên viên Miền Bắc", rls: {vung: [B]}}
+  analyst_nam: {password: analyst123, role: analyst, full_name: "Chuyên viên Miền Nam", rls: {vung: [N]}}
+
+# RLS: vị từ được TIÊM vào mọi tham chiếu bảng (AST rewrite) khi người dùng có thuộc tính rls tương ứng.
+# {vung} được thay bằng danh sách giá trị của người dùng, ví dụ 'B'.
+rls:
+  vung:
+    dw.dim_cn:     "ma_vung IN ({vung})"
+    dw.dim_kho:    "ma_vung IN ({vung})"
+    dw.fct_ct_dh:  "ma_cn IN (SELECT ma_cn FROM dw.dim_cn WHERE ma_vung IN ({vung}))"
+    dw.fct_dh:     "ma_cn IN (SELECT ma_cn FROM dw.dim_cn WHERE ma_vung IN ({vung}))"
+    dw.fct_th:     "ma_cn IN (SELECT ma_cn FROM dw.dim_cn WHERE ma_vung IN ({vung}))"
+    dw.fct_kh_dt:  "ma_cn IN (SELECT ma_cn FROM dw.dim_cn WHERE ma_vung IN ({vung}))"
+    dw.dim_nv:     "ma_cn IN (SELECT ma_cn FROM dw.dim_cn WHERE ma_vung IN ({vung}))"
+    dw.fct_tk_tuan: "ma_kho IN (SELECT ma_kho FROM dw.dim_kho WHERE ma_vung IN ({vung}))"
+    dw.fct_nk:     "ma_kho IN (SELECT ma_kho FROM dw.dim_kho WHERE ma_vung IN ({vung}))"
+    dw.dim_kh:     "ma_vung IN ({vung})"
+
+# Hàm bị cấm trong mọi truy vấn (truy cập file/mạng/cấu hình hệ thống)
+denied_functions:
+  - read_csv
+  - read_csv_auto
+  - read_parquet
+  - parquet_scan
+  - read_json
+  - read_json_auto
+  - read_json_objects
+  - read_text
+  - read_blob
+  - read_ndjson
+  - glob
+  - sniff_csv
+  - getenv
+  - current_setting
+  - duckdb_secrets
+  - duckdb_settings
+  - query
+  - query_table
+  - iceberg_scan
+  - delta_scan
+  - sqlite_scan
+  - postgres_scan
+  - mysql_scan

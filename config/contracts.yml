@@ -1,0 +1,10 @@
+# Data contract của các bảng nguồn (raw). Bộ kiểm định so sánh schema thực tế với contract để phát hiện schema drift.
+raw.pos_don_hang: [so_hd, ngay_gio, ma_ch, ma_kh, ma_nv, ma_ctkm, tt_don, hinh_thuc_tt, tong_tien_hd]
+raw.pos_ct_don_hang: [so_hd, stt, ma_hang, so_luong, don_gia, tien_ck]
+raw.ecom_orders: [order_id, order_date, customer_id, channel, fulfill_store, status, payment_method, shipping_fee, promo_code]
+raw.ecom_order_items: [order_id, line_no, sku, qty, unit_price, discount_amt]
+raw.crm_khach_hang: [ma_kh, ho_ten, gioi_tinh, ngay_sinh, sdt, email, dia_chi_tinh, hang_the, ngay_dang_ky]
+raw.erp_san_pham: [ma_hang, ten_hang, nganh_hang, nhom_hang, thuong_hieu, gia_ban_le, gia_von, ngay_ra_mat, ma_ncc, trang_thai_kd]
+raw.erp_ton_kho: [ngay_chot, ma_kho, ma_hang, ton_cuoi, dang_ve]
+raw.erp_nhap_kho: [so_pn, ngay_nhap, ma_kho, ma_ncc, ma_hang, sl, dg_nhap]
+raw.erp_tra_hang: [so_phieu, ma_don, ma_hang, sl, ly_do, ngay_tra, tien_hoan]

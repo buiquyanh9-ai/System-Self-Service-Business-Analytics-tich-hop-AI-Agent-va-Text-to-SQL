@@ -1,0 +1,16 @@
+# Triển khai lên Render (Blueprint). Railway/Fly cũng dùng được Dockerfile này.
+services:
+  - type: web
+    name: data01-text2sql
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY     # để trống -> chạy chế độ offline NLU
+        sync: false
+      - key: LLM_MODE
+        value: auto
+      - key: SUPABASE_JWT_SECRET   # tùy chọn: chấp nhận access token của Supabase Auth
+        sync: false

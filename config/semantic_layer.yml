@@ -1,0 +1,370 @@
+# =====================================================================================
+# TẦNG NGỮ NGHĨA (semantic layer) — nguồn sự thật duy nhất về định nghĩa chỉ số.
+# Tương đương dbt semantic model / MetricFlow: models (bảng sự kiện + đường join),
+# dimensions (chiều phân tích) và metrics (chỉ số, có chủ sở hữu nghiệp vụ).
+# Agent BẮT BUỘC dùng định nghĩa ở đây khi câu hỏi nhắc tới chỉ số đã có tên.
+# =====================================================================================
+version: 1
+
+models:
+  ban_hang:
+    label: Bán hàng (cấp dòng đơn hàng)
+    table: dw.fct_ct_dh
+    alias: f
+    time_column: f.ngay_dh
+    time_grain_min: day
+    grain: "1 dòng = 1 sản phẩm trong 1 đơn (ma_dh + dong)"
+    joins:
+      sp:   {table: dw.dim_sp,   on: "f.ma_sp = sp.ma_sp"}
+      nh:   {table: dw.dim_nh,   on: "sp.ma_nh = nh.ma_nh", requires: [sp]}
+      ncc:  {table: dw.dim_ncc,  on: "sp.ma_ncc = ncc.ma_ncc", requires: [sp]}
+      cn:   {table: dw.dim_cn,   on: "f.ma_cn = cn.ma_cn"}
+      vung: {table: dw.dim_vung, on: "cn.ma_vung = vung.ma_vung", requires: [cn]}
+      kenh: {table: dw.dim_kenh, on: "f.ma_kenh = kenh.ma_kenh"}
+      kh:   {table: dw.dim_kh,   on: "f.ma_kh = kh.ma_kh", type: LEFT}
+      km:   {table: dw.dim_km,   on: "f.ma_km = km.ma_km", type: LEFT}
+
+  don_hang:
+    label: Đơn hàng (cấp đơn)
+    table: dw.fct_dh
+    alias: d
+    time_column: d.ngay_dh
+    time_grain_min: day
+    grain: "1 dòng = 1 đơn hàng"
+    joins:
+      cn:   {table: dw.dim_cn,   on: "d.ma_cn = cn.ma_cn"}
+      vung: {table: dw.dim_vung, on: "cn.ma_vung = vung.ma_vung", requires: [cn]}
+      kenh: {table: dw.dim_kenh, on: "d.ma_kenh = kenh.ma_kenh"}
+      kh:   {table: dw.dim_kh,   on: "d.ma_kh = kh.ma_kh", type: LEFT}
+      km:   {table: dw.dim_km,   on: "d.ma_km = km.ma_km", type: LEFT}
+
+  tra_hang:
+    label: Trả hàng
+    table: dw.fct_th
+    alias: r
+    time_column: r.ngay_tra
+    time_grain_min: day
+    grain: "1 dòng = 1 phiếu trả cho 1 sản phẩm"
+    joins:
+      sp:   {table: dw.dim_sp,   on: "r.ma_sp = sp.ma_sp"}
+      nh:   {table: dw.dim_nh,   on: "sp.ma_nh = nh.ma_nh", requires: [sp]}
+      cn:   {table: dw.dim_cn,   on: "r.ma_cn = cn.ma_cn", type: LEFT}
+      vung: {table: dw.dim_vung, on: "cn.ma_vung = vung.ma_vung", requires: [cn], type: LEFT}
+      kenh: {table: dw.dim_kenh, on: "r.ma_kenh = kenh.ma_kenh", type: LEFT}
+
+  ton_kho:
+    label: Tồn kho (ảnh chụp cuối tuần)
+    table: dw.fct_tk_tuan
+    alias: t
+    time_column: t.ngay_chot
+    time_grain_min: week
+    semi_additive: true      # không cộng dồn qua thời gian: lấy ảnh chụp cuối cùng trong mỗi kỳ
+    grain: "1 dòng = tồn của 1 SKU tại 1 kho vào Chủ nhật"
+    joins:
+      sp:   {table: dw.dim_sp,   on: "t.ma_sp = sp.ma_sp"}
+      nh:   {table: dw.dim_nh,   on: "sp.ma_nh = nh.ma_nh", requires: [sp]}
+      ncc:  {table: dw.dim_ncc,  on: "sp.ma_ncc = ncc.ma_ncc", requires: [sp]}
+      kho:  {table: dw.dim_kho,  on: "t.ma_kho = kho.ma_kho"}
+      vung: {table: dw.dim_vung, on: "kho.ma_vung = vung.ma_vung", requires: [kho]}
+
+  nhap_kho:
+    label: Nhập kho
+    table: dw.fct_nk
+    alias: n
+    time_column: n.ngay_nk
+    time_grain_min: day
+    grain: "1 dòng = 1 SKU trên 1 phiếu nhập"
+    joins:
+      sp:   {table: dw.dim_sp,   on: "n.ma_sp = sp.ma_sp"}
+      nh:   {table: dw.dim_nh,   on: "sp.ma_nh = nh.ma_nh", requires: [sp]}
+      kho:  {table: dw.dim_kho,  on: "n.ma_kho = kho.ma_kho"}
+      vung: {table: dw.dim_vung, on: "kho.ma_vung = vung.ma_vung", requires: [kho]}
+      ncc:  {table: dw.dim_ncc,  on: "n.ma_ncc = ncc.ma_ncc"}
+
+  ke_hoach:
+    label: Kế hoạch doanh thu
+    table: dw.fct_kh_dt
+    alias: k
+    time_column: k.thang
+    time_grain_min: month
+    grain: "1 dòng = kế hoạch 1 cửa hàng trong 1 tháng"
+    joins:
+      cn:   {table: dw.dim_cn,   on: "k.ma_cn = cn.ma_cn"}
+      vung: {table: dw.dim_vung, on: "cn.ma_vung = vung.ma_vung", requires: [cn]}
+
+  marketing:
+    label: Chi phí marketing
+    table: dw.fct_cp_mkt
+    alias: m
+    time_column: m.thang
+    time_grain_min: month
+    grain: "1 dòng = chi phí 1 kênh trong 1 tháng"
+    joins:
+      kenh: {table: dw.dim_kenh, on: "m.ma_kenh = kenh.ma_kenh"}
+
+dimensions:
+  # ---- thời gian (áp lên time_column của từng model)
+  ngay:  {label: Ngày,  kind: time, grain: day,     synonyms: [ngày, theo ngày, hằng ngày, mỗi ngày]}
+  tuan:  {label: Tuần,  kind: time, grain: week,    synonyms: [tuần, theo tuần, hằng tuần, mỗi tuần]}
+  thang: {label: Tháng, kind: time, grain: month,   synonyms: [tháng, theo tháng, hằng tháng, mỗi tháng, từng tháng]}
+  quy:   {label: Quý,   kind: time, grain: quarter, synonyms: [quý, theo quý, từng quý]}
+  nam:   {label: Năm,   kind: time, grain: year,    synonyms: [năm, theo năm, từng năm]}
+  # ---- tổ chức
+  vung:        {label: Vùng miền,         expr: vung.ten_vung, synonyms: [miền, vùng, vùng miền, khu vực, region]}
+  tinh_tp:     {label: Tỉnh/Thành (cửa hàng), expr: cn.tinh_tp, synonyms: [tỉnh, thành phố, tỉnh thành, tỉnh/thành, địa phương]}
+  chi_nhanh:   {label: Cửa hàng,          expr: cn.ten_cn, synonyms: [cửa hàng, chi nhánh, siêu thị, shop, điểm bán, store]}
+  loai_ch:     {label: Loại cửa hàng,     expr: cn.loai_ch, synonyms: [loại cửa hàng, mô hình cửa hàng, format cửa hàng]}
+  kho:         {label: Kho,               expr: kho.ten_kho, synonyms: [kho, kho hàng, trung tâm phân phối, dc]}
+  # ---- sản phẩm
+  nganh_hang:  {label: Ngành hàng,        expr: nh.ten_nh, synonyms: [ngành hàng, ngành, danh mục, category, loại sản phẩm, nhóm ngành]}
+  nhom_sp:     {label: Nhóm sản phẩm,     expr: sp.nhom_sp, synonyms: [nhóm sản phẩm, dòng sản phẩm, nhóm hàng]}
+  thuong_hieu: {label: Thương hiệu,       expr: sp.thuong_hieu, synonyms: [thương hiệu, hãng, brand, nhãn hàng]}
+  san_pham:    {label: Sản phẩm,          expr: sp.ten_sp, synonyms: [sản phẩm, mặt hàng, sku, model, mẫu, món hàng]}
+  ncc:         {label: Nhà cung cấp,      expr: ncc.ten_ncc, synonyms: [nhà cung cấp, ncc, supplier, nhà phân phối]}
+  # ---- kênh & khách hàng
+  kenh:        {label: Kênh bán,          expr: kenh.ten_kenh, synonyms: [kênh, kênh bán, kênh bán hàng, channel]}
+  nhom_kenh:   {label: Online/Offline,    expr: kenh.nhom_kenh, synonyms: [online offline, nhóm kênh, trực tuyến hay tại cửa hàng]}
+  hang_tv:     {label: Hạng thành viên,   expr: kh.hang_tv, synonyms: [hạng thành viên, hạng thẻ, hạng khách hàng, tier]}
+  gioi_tinh:   {label: Giới tính KH,      expr: kh.gt, synonyms: [giới tính, nam nữ]}
+  tinh_kh:     {label: Tỉnh/Thành KH,     expr: kh.tinh_tp, synonyms: [tỉnh của khách, khách hàng ở tỉnh, nơi ở khách hàng]}
+  khuyen_mai:  {label: Chương trình KM,   expr: km.ten_km, synonyms: [chương trình khuyến mãi, khuyến mãi, campaign, ctkm]}
+  # ---- riêng theo model
+  pttt:        {label: Phương thức thanh toán, expr: d.pttt, expr_by_model: {ban_hang: f.pttt}, synonyms: [phương thức thanh toán, hình thức thanh toán, thanh toán bằng]}
+  trang_thai:  {label: Trạng thái đơn,    expr: d.trang_thai, expr_by_model: {ban_hang: f.trang_thai}, synonyms: [trạng thái đơn, tình trạng đơn]}
+  ly_do_tra:   {label: Lý do trả hàng,    expr: r.ly_do, synonyms: [lý do trả, lý do trả hàng, nguyên nhân trả hàng]}
+
+metrics:
+  doanh_thu_gop:
+    label: Doanh thu gộp
+    model: ban_hang
+    sql: "SUM(f.sl * f.dg)"
+    filter: "f.trang_thai <> 'HUY'"
+    format: currency
+    owner: Phòng Kinh doanh
+    description: "Tổng giá trị hàng bán (số lượng × đơn giá) TRƯỚC chiết khấu và trả hàng, loại đơn đã hủy. Phòng Kinh doanh dùng để đo sức bán."
+    synonyms: [doanh thu gộp, doanh số, doanh số bán, gmv, tổng doanh số, doanh thu trước chiết khấu]
+  doanh_thu_thuan:
+    label: Doanh thu thuần
+    model: ban_hang
+    sql: "SUM(f.tt - f.tien_tra)"
+    filter: "f.trang_thai = 'HOAN_THANH'"
+    format: currency
+    owner: Phòng Tài chính
+    description: "Thành tiền SAU chiết khấu, trừ giá trị hàng trả, chỉ tính đơn đã hoàn thành. Định nghĩa chính thức cho báo cáo tài chính và kế hoạch."
+    synonyms: [doanh thu thuần, doanh thu net, net revenue, doanh thu sau chiết khấu, doanh thu kế toán, doanh thu thực]
+  so_don:
+    label: Số đơn hàng
+    model: ban_hang
+    sql: "COUNT(DISTINCT f.ma_dh)"
+    filter: "f.trang_thai = 'HOAN_THANH'"
+    format: number
+    owner: Phòng Kinh doanh
+    description: "Số đơn hàng hoàn thành (đếm phân biệt mã đơn)."
+    synonyms: [số đơn, số đơn hàng, số lượng đơn, đơn hàng, số hóa đơn, lượng đơn, bao nhiêu đơn]
+  so_luong_ban:
+    label: Số lượng bán
+    model: ban_hang
+    sql: "SUM(f.sl - f.sl_tra)"
+    filter: "f.trang_thai = 'HOAN_THANH'"
+    format: number
+    owner: Phòng Kinh doanh
+    description: "Số sản phẩm bán ra (đã trừ số lượng trả) của đơn hoàn thành."
+    synonyms: [số lượng bán, sản lượng, số sản phẩm bán, số máy bán, số lượng sản phẩm, bán được bao nhiêu cái, số cái]
+  so_khach_hang:
+    label: Số khách hàng mua
+    model: ban_hang
+    sql: "COUNT(DISTINCT f.ma_kh)"
+    filter: "f.trang_thai = 'HOAN_THANH' AND f.ma_kh IS NOT NULL"
+    format: number
+    owner: Phòng Marketing
+    description: "Số khách hàng định danh (có mã KH) có ít nhất 1 đơn hoàn thành. Khách vãng lai không được tính."
+    synonyms: [số khách hàng, số khách, khách hàng mua, lượng khách, bao nhiêu khách]
+  gia_tri_don_tb:
+    label: Giá trị đơn trung bình
+    type: derived
+    expr: "{doanh_thu_thuan} / NULLIF({so_don}, 0)"
+    format: currency
+    owner: Phòng Kinh doanh
+    description: "Doanh thu thuần / số đơn hoàn thành (AOV)."
+    synonyms: [giá trị đơn trung bình, aov, giá trị trung bình mỗi đơn, trung bình mỗi đơn, bình quân mỗi đơn]
+  loi_nhuan_gop:
+    label: Lợi nhuận gộp
+    model: ban_hang
+    sql: "SUM(f.tt - f.tien_tra - (f.sl - f.sl_tra) * f.gia_von)"
+    filter: "f.trang_thai = 'HOAN_THANH'"
+    format: currency
+    owner: Phòng Tài chính
+    description: "Doanh thu thuần trừ giá vốn hàng bán (giá vốn × số lượng thực bán)."
+    synonyms: [lợi nhuận gộp, lãi gộp, gross profit, lợi nhuận, lãi]
+  bien_ln_gop:
+    label: Biên lợi nhuận gộp (%)
+    type: derived
+    expr: "{loi_nhuan_gop} * 100.0 / NULLIF({doanh_thu_thuan}, 0)"
+    format: percent
+    owner: Phòng Tài chính
+    description: "Lợi nhuận gộp / doanh thu thuần × 100."
+    synonyms: [biên lợi nhuận gộp, biên lợi nhuận, tỷ suất lợi nhuận gộp, margin, biên lãi gộp]
+  tong_chiet_khau:
+    label: Tổng chiết khấu
+    model: ban_hang
+    sql: "SUM(f.ck)"
+    filter: "f.trang_thai = 'HOAN_THANH'"
+    format: currency
+    owner: Phòng Marketing
+    description: "Tổng tiền chiết khấu/giảm giá trên dòng đơn hoàn thành."
+    synonyms: [chiết khấu, tổng chiết khấu, tiền giảm giá, giảm giá, tiền khuyến mãi]
+  ty_le_tra_hang:
+    label: Tỷ lệ trả hàng (%)
+    model: ban_hang
+    sql: "SUM(f.tien_tra) * 100.0 / NULLIF(SUM(f.tt), 0)"
+    filter: "f.trang_thai = 'HOAN_THANH'"
+    format: percent
+    additive: false
+    owner: Phòng Chăm sóc khách hàng
+    description: "Giá trị hàng trả / thành tiền của đơn hoàn thành × 100 (trả một phần). Đơn trả toàn bộ có trạng thái TRA_HANG và không nằm trong mẫu số."
+    synonyms: [tỷ lệ trả hàng, tỉ lệ trả hàng, return rate, tỷ lệ hoàn hàng]
+  gia_tri_tra_hang:
+    label: Giá trị hàng trả
+    model: tra_hang
+    sql: "SUM(r.tien_hoan)"
+    format: currency
+    owner: Phòng Chăm sóc khách hàng
+    description: "Tổng tiền hoàn cho khách theo ngày trả hàng (gồm cả trả toàn bộ đơn)."
+    synonyms: [giá trị hàng trả, tiền hoàn, tiền trả hàng, giá trị trả hàng, hàng trả]
+  so_phieu_tra:
+    label: Số lượt trả hàng
+    model: tra_hang
+    sql: "COUNT(*)"
+    format: number
+    owner: Phòng Chăm sóc khách hàng
+    description: "Số dòng phiếu trả hàng."
+    synonyms: [số lượt trả, số phiếu trả, số lần trả hàng, lượt trả hàng]
+  so_don_tat_ca:
+    label: Tổng số đơn (mọi trạng thái)
+    model: don_hang
+    sql: "COUNT(*)"
+    format: number
+    owner: Phòng Vận hành
+    description: "Tổng số đơn phát sinh, kể cả hủy/trả/đang giao."
+    synonyms: [tổng số đơn phát sinh, tất cả đơn, mọi trạng thái]
+  ty_le_huy:
+    label: Tỷ lệ hủy đơn (%)
+    model: don_hang
+    sql: "COUNT(*) FILTER (WHERE d.trang_thai = 'HUY') * 100.0 / NULLIF(COUNT(*), 0)"
+    format: percent
+    additive: false
+    owner: Phòng Vận hành
+    description: "Số đơn hủy / tổng số đơn phát sinh × 100."
+    synonyms: [tỷ lệ hủy, tỉ lệ hủy, tỷ lệ hủy đơn, cancel rate, đơn bị hủy chiếm]
+  so_don_huy:
+    label: Số đơn hủy
+    model: don_hang
+    sql: "COUNT(*)"
+    filter: "d.trang_thai = 'HUY'"
+    format: number
+    owner: Phòng Vận hành
+    description: "Số đơn có trạng thái hủy."
+    synonyms: [số đơn hủy, đơn hủy, đơn bị hủy]
+  phi_van_chuyen:
+    label: Phí vận chuyển thu
+    model: don_hang
+    sql: "SUM(d.phi_vc)"
+    filter: "d.trang_thai = 'HOAN_THANH'"
+    format: currency
+    owner: Phòng Vận hành
+    description: "Tổng phí vận chuyển thu từ khách trên đơn hoàn thành (chỉ đơn online)."
+    synonyms: [phí vận chuyển, phí ship, phí giao hàng]
+  ton_kho_sl:
+    label: Số lượng tồn kho
+    model: ton_kho
+    sql: "SUM(t.sl_ton)"
+    format: number
+    additive: false
+    owner: Phòng Chuỗi cung ứng
+    description: "Số lượng tồn cuối kỳ (ảnh chụp Chủ nhật CUỐI CÙNG trong kỳ). Không cộng dồn qua các tuần."
+    synonyms: [tồn kho, số lượng tồn, lượng tồn, hàng tồn, tồn, còn bao nhiêu hàng]
+  gia_tri_ton_kho:
+    label: Giá trị tồn kho
+    model: ton_kho
+    sql: "SUM(t.gia_tri_ton)"
+    format: currency
+    additive: false
+    owner: Phòng Chuỗi cung ứng
+    description: "Giá trị tồn theo giá vốn tại ảnh chụp cuối cùng trong kỳ."
+    synonyms: [giá trị tồn kho, giá trị tồn, vốn tồn kho, tiền hàng tồn]
+  hang_dang_ve:
+    label: Hàng đang về
+    model: ton_kho
+    sql: "SUM(t.sl_dang_ve)"
+    format: number
+    additive: false
+    owner: Phòng Chuỗi cung ứng
+    description: "Số lượng đã đặt nhà cung cấp, đang trên đường về kho (ảnh chụp cuối kỳ)."
+    synonyms: [hàng đang về, đang về, đã đặt chưa về, hàng trên đường]
+  sl_nhap_kho:
+    label: Số lượng nhập kho
+    model: nhap_kho
+    sql: "SUM(n.sl_nhap)"
+    format: number
+    owner: Phòng Chuỗi cung ứng
+    description: "Tổng số lượng nhập từ nhà cung cấp."
+    synonyms: [số lượng nhập, nhập kho, lượng nhập, nhập hàng]
+  gia_tri_nhap_kho:
+    label: Giá trị nhập kho
+    model: nhap_kho
+    sql: "SUM(n.tt_nhap)"
+    format: currency
+    owner: Phòng Chuỗi cung ứng
+    description: "Tổng giá trị nhập (số lượng × đơn giá nhập)."
+    synonyms: [giá trị nhập, giá trị nhập kho, tiền nhập hàng, chi phí nhập hàng]
+  ke_hoach_dt:
+    label: Kế hoạch doanh thu
+    model: ke_hoach
+    sql: "SUM(k.dt_ke_hoach)"
+    format: currency
+    owner: Phòng Tài chính
+    description: "Chỉ tiêu doanh thu thuần theo tháng (chỉ có độ chi tiết tháng × cửa hàng)."
+    synonyms: [kế hoạch doanh thu, kế hoạch, chỉ tiêu, target, mục tiêu doanh thu]
+  ty_le_dat_kh:
+    label: Tỷ lệ đạt kế hoạch (%)
+    type: derived
+    expr: "{doanh_thu_thuan} * 100.0 / NULLIF({ke_hoach_dt}, 0)"
+    format: percent
+    owner: Phòng Tài chính
+    description: "Doanh thu thuần thực tế / kế hoạch doanh thu × 100."
+    synonyms: [tỷ lệ đạt kế hoạch, đạt kế hoạch, hoàn thành kế hoạch, "% kế hoạch", đạt chỉ tiêu, tỷ lệ hoàn thành chỉ tiêu]
+  chi_phi_mkt:
+    label: Chi phí marketing
+    model: marketing
+    sql: "SUM(m.chi_phi)"
+    format: currency
+    owner: Phòng Marketing
+    description: "Chi phí marketing theo tháng × kênh."
+    synonyms: [chi phí marketing, chi phí quảng cáo, ngân sách marketing, chi phí mkt]
+  roas:
+    label: Doanh thu / chi phí marketing (ROAS)
+    type: derived
+    expr: "{doanh_thu_thuan} / NULLIF({chi_phi_mkt}, 0)"
+    format: ratio
+    owner: Phòng Marketing
+    description: "Doanh thu thuần trên mỗi đồng chi phí marketing."
+    synonyms: [roas, roi marketing, hiệu quả marketing, doanh thu trên chi phí marketing]
+
+# Thuật ngữ mơ hồ -> agent phải hỏi lại (trừ khi người dùng đã chọn trước trong hội thoại)
+ambiguities:
+  - id: revenue_definition
+    triggers: [doanh thu]
+    unless_any: [gộp, thuần, net, gmv, doanh số, trước chiết khấu, sau chiết khấu, kế toán, thực]
+    question: "“Doanh thu” đang được các phòng ban định nghĩa khác nhau. Bạn muốn dùng định nghĩa nào?"
+    options:
+      - {label: "Doanh thu thuần (Tài chính) — sau chiết khấu, trừ hàng trả, chỉ đơn hoàn thành", metric: doanh_thu_thuan}
+      - {label: "Doanh thu gộp (Kinh doanh) — trước chiết khấu, loại đơn hủy", metric: doanh_thu_gop}
+  - id: best_criteria
+    triggers: [bán chạy, tốt nhất, hiệu quả nhất, nổi bật nhất, mạnh nhất, top]
+    requires_no_metric: true
+    question: "Bạn muốn xếp hạng theo tiêu chí nào?"
+    options:
+      - {label: "Doanh thu thuần", metric: doanh_thu_thuan}
+      - {label: "Số lượng bán", metric: so_luong_ban}
+      - {label: "Số đơn hàng", metric: so_don}
+      - {label: "Lợi nhuận gộp", metric: loi_nhuan_gop}

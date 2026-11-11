@@ -1,0 +1,66 @@
+# Few-shot khởi tạo (câu hỏi -> SQL đã được Data team xác nhận). Dùng làm ví dụ trong prompt cho LLM và để tái
+# sử dụng khi có câu hỏi gần như trùng. Kho few-shot được mở rộng tự động từ phản hồi 👍/SQL sửa của người dùng
+# và từ bộ tối ưu (eval optimizer).
+- question: "Top 10 khách hàng có số đơn hoàn thành nhiều nhất năm 2025"
+  sql: |
+    SELECT f.ma_kh, COUNT(DISTINCT f.ma_dh) AS so_don, SUM(f.tt - f.tien_tra) AS doanh_thu_thuan
+    FROM dw.fct_ct_dh f
+    WHERE f.trang_thai = 'HOAN_THANH' AND f.ma_kh IS NOT NULL
+      AND f.ngay_dh >= DATE '2025-01-01' AND f.ngay_dh < DATE '2026-01-01'
+    GROUP BY f.ma_kh
+    ORDER BY so_don DESC
+    LIMIT 10
+- question: "Những sản phẩm đang kinh doanh nhưng không bán được chiếc nào trong tháng 10/2026"
+  sql: |
+    SELECT sp.ma_sp, sp.ten_sp, sp.thuong_hieu
+    FROM dw.dim_sp sp
+    WHERE sp.trang_thai_kd = 'Đang KD'
+      AND sp.ma_sp NOT IN (
+        SELECT f.ma_sp FROM dw.fct_ct_dh f
+        WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh >= DATE '2026-10-01' AND f.ngay_dh < DATE '2026-11-01')
+    ORDER BY sp.ten_sp
+- question: "Số đơn trung bình mỗi ngày theo thứ trong tuần năm 2026"
+  sql: |
+    SELECT n.ten_thu, n.thu, COUNT(DISTINCT f.ma_dh) * 1.0 / COUNT(DISTINCT f.ngay_dh) AS so_don_tb_ngay
+    FROM dw.fct_ct_dh f
+    JOIN dw.dim_ngay n ON n.ngay = f.ngay_dh
+    WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh >= DATE '2026-01-01' AND f.ngay_dh < DATE '2027-01-01'
+    GROUP BY n.ten_thu, n.thu
+    ORDER BY n.thu
+- question: "Tỷ trọng doanh thu thuần online trong tổng doanh thu thuần theo tháng năm 2026"
+  sql: |
+    SELECT STRFTIME(f.ngay_dh, '%Y-%m') AS thang,
+           SUM(f.tt - f.tien_tra) FILTER (WHERE k.nhom_kenh = 'Online') * 100.0 / NULLIF(SUM(f.tt - f.tien_tra), 0) AS ty_trong_online_pct
+    FROM dw.fct_ct_dh f
+    JOIN dw.dim_kenh k ON k.ma_kenh = f.ma_kenh
+    WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh >= DATE '2026-01-01' AND f.ngay_dh < DATE '2027-01-01'
+    GROUP BY 1
+    ORDER BY 1
+- question: "Sản phẩm nào có tồn kho cao nhưng bán chậm (tồn trên 50 và bán dưới 10 cái trong 30 ngày gần nhất)?"
+  sql: |
+    WITH ton AS (
+      SELECT t.ma_sp, SUM(t.sl_ton) AS sl_ton
+      FROM dw.fct_tk_tuan t
+      WHERE t.ngay_chot = (SELECT MAX(t2.ngay_chot) FROM dw.fct_tk_tuan t2)
+      GROUP BY t.ma_sp),
+    ban AS (
+      SELECT f.ma_sp, SUM(f.sl - f.sl_tra) AS sl_ban
+      FROM dw.fct_ct_dh f
+      WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh >= DATE '2026-10-11' AND f.ngay_dh < DATE '2026-11-10'
+      GROUP BY f.ma_sp)
+    SELECT sp.ten_sp, ton.sl_ton, COALESCE(ban.sl_ban, 0) AS sl_ban_30_ngay
+    FROM ton JOIN dw.dim_sp sp ON sp.ma_sp = ton.ma_sp LEFT JOIN ban ON ban.ma_sp = ton.ma_sp
+    WHERE ton.sl_ton > 50 AND COALESCE(ban.sl_ban, 0) < 10
+    ORDER BY ton.sl_ton DESC
+- question: "Tỷ lệ khách hàng quay lại mua lần 2 theo hạng thành viên năm 2025"
+  sql: |
+    WITH kh AS (
+      SELECT f.ma_kh, COUNT(DISTINCT f.ma_dh) AS so_don
+      FROM dw.fct_ct_dh f
+      WHERE f.trang_thai = 'HOAN_THANH' AND f.ma_kh IS NOT NULL
+        AND f.ngay_dh >= DATE '2025-01-01' AND f.ngay_dh < DATE '2026-01-01'
+      GROUP BY f.ma_kh)
+    SELECT d.hang_tv, COUNT(*) AS so_khach, AVG(CASE WHEN kh.so_don >= 2 THEN 1.0 ELSE 0 END) * 100 AS ty_le_quay_lai_pct
+    FROM kh JOIN dw.dim_kh d ON d.ma_kh = kh.ma_kh
+    GROUP BY d.hang_tv
+    ORDER BY ty_le_quay_lai_pct DESC

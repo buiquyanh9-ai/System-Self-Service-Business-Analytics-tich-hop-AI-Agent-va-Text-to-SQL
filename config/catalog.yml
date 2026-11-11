@@ -1,0 +1,243 @@
+# =====================================================================================
+# DATA CATALOG — mô tả nghiệp vụ cho bảng/cột (tên cột viết tắt kiểu kho dữ liệu thật).
+# Được index vào bộ tìm kiếm schema (RAG) và đưa vào prompt cho LLM. Admin có thể sửa trên giao diện.
+# sensitivity: pii | confidential  -> bị chặn với vai trò analyst (xem config/policies.yml)
+# =====================================================================================
+tables:
+  dw.fct_ct_dh:
+    description: "Chi tiết đơn hàng — sự kiện bán hàng cấp DÒNG (mỗi dòng = 1 SKU trong 1 đơn). Bảng lớn nhất kho, phân vùng theo ngay_dh."
+    synonyms: [chi tiết đơn hàng, dòng đơn hàng, bán hàng, doanh thu, order lines, sales]
+    grain: "ma_dh + dong"
+    columns:
+      ma_dh: {description: "Mã đơn hàng (HD... = POS cửa hàng, ECO-... = online)"}
+      dong: {description: "Số thứ tự dòng trong đơn"}
+      ngay_dh: {description: "Ngày đặt hàng (cột phân vùng)", synonyms: [ngày bán, ngày đặt, ngày mua]}
+      ma_cn: {description: "Mã cửa hàng xử lý đơn -> dw.dim_cn"}
+      ma_kenh: {description: "Mã kênh bán: CH=tại cửa hàng, WEB, APP, SAN=sàn TMĐT -> dw.dim_kenh"}
+      ma_kh: {description: "Mã khách hàng -> dw.dim_kh (NULL = khách vãng lai)"}
+      ma_km: {description: "Mã chương trình khuyến mãi áp dụng -> dw.dim_km"}
+      ma_sp: {description: "Mã sản phẩm (SKU) -> dw.dim_sp"}
+      trang_thai: {description: "Trạng thái đơn chuẩn hóa: HOAN_THANH, HUY, TRA_HANG (trả toàn bộ), DANG_GIAO, KHAC (mã nguồn chưa map)"}
+      sl: {description: "Số lượng bán trên dòng", synonyms: [số lượng]}
+      dg: {description: "Đơn giá bán (VND)", synonyms: [đơn giá, giá bán]}
+      ck: {description: "Tiền chiết khấu của dòng (VND)", synonyms: [chiết khấu, giảm giá]}
+      tt: {description: "Thành tiền sau chiết khấu = sl*dg - ck (VND)", synonyms: [thành tiền]}
+      gia_von: {description: "Giá vốn đơn vị của SKU (VND)"}
+      sl_tra: {description: "Số lượng khách trả lại (trả một phần)"}
+      tien_tra: {description: "Giá trị tiền hoàn cho phần hàng trả (VND)"}
+  dw.fct_dh:
+    description: "Đơn hàng — sự kiện cấp ĐƠN (header). Dùng cho đếm đơn, tỷ lệ hủy, phương thức thanh toán, phí vận chuyển. KHÔNG join với fct_ct_dh rồi SUM cột của bảng này (nhân bản số liệu)."
+    synonyms: [đơn hàng, hóa đơn, orders, header đơn]
+    grain: "ma_dh"
+    columns:
+      ma_dh: {description: "Mã đơn hàng"}
+      ngay_dh: {description: "Ngày đặt hàng (cột phân vùng)"}
+      tg_dh: {description: "Thời điểm đặt hàng (timestamp)"}
+      ma_kh: {description: "Mã khách hàng (NULL = khách vãng lai)"}
+      ma_cn: {description: "Mã cửa hàng xử lý đơn"}
+      ma_kenh: {description: "Mã kênh bán"}
+      ma_nv: {description: "Mã nhân viên bán hàng (chỉ đơn POS)"}
+      ma_km: {description: "Mã chương trình khuyến mãi"}
+      trang_thai: {description: "Trạng thái đơn chuẩn hóa (HOAN_THANH/HUY/TRA_HANG/DANG_GIAO/KHAC)"}
+      pttt: {description: "Phương thức thanh toán", synonyms: [thanh toán, hình thức thanh toán]}
+      phi_vc: {description: "Phí vận chuyển thu khách (VND)"}
+      so_dong: {description: "Số dòng sản phẩm trong đơn"}
+      tien_hang: {description: "Tổng tiền hàng trước chiết khấu (VND)"}
+      tien_ck: {description: "Tổng chiết khấu của đơn (VND)"}
+      tong_tt: {description: "Tổng thành tiền sau chiết khấu, chưa gồm phí vận chuyển (VND)"}
+      nguon: {description: "Hệ thống nguồn: POS hoặc ECOM"}
+  dw.fct_th:
+    description: "Phiếu trả hàng (ERP) theo ngày trả."
+    synonyms: [trả hàng, hoàn hàng, returns]
+    columns:
+      ma_th: {description: "Mã phiếu trả"}
+      ma_dh: {description: "Mã đơn hàng gốc"}
+      ma_sp: {description: "Mã sản phẩm trả"}
+      ma_cn: {description: "Cửa hàng của đơn gốc"}
+      ma_kenh: {description: "Kênh của đơn gốc"}
+      ngay_tra: {description: "Ngày trả hàng (cột phân vùng)"}
+      sl_tra: {description: "Số lượng trả"}
+      ly_do: {description: "Lý do trả hàng"}
+      tien_hoan: {description: "Số tiền hoàn cho khách (VND)"}
+  dw.fct_tk_tuan:
+    description: "Tồn kho — ảnh chụp cuối tuần (Chủ nhật) theo kho × SKU. Chỉ số semi-additive: KHÔNG SUM qua nhiều ngay_chot, phải lọc 1 ngày chốt."
+    synonyms: [tồn kho, inventory, hàng tồn, stock]
+    columns:
+      ngay_chot: {description: "Ngày chốt tồn (Chủ nhật, cột phân vùng)"}
+      ma_kho: {description: "Mã kho -> dw.dim_kho"}
+      ma_sp: {description: "Mã sản phẩm"}
+      sl_ton: {description: "Số lượng tồn cuối ngày chốt", synonyms: [tồn, số lượng tồn]}
+      sl_dang_ve: {description: "Số lượng đã đặt NCC, đang về"}
+      gia_tri_ton: {description: "Giá trị tồn theo giá vốn (VND)"}
+  dw.fct_nk:
+    description: "Nhập kho từ nhà cung cấp."
+    synonyms: [nhập kho, nhập hàng, mua hàng, purchase]
+    columns:
+      ma_pn: {description: "Mã phiếu nhập"}
+      ngay_nk: {description: "Ngày nhập kho (cột phân vùng)"}
+      ma_kho: {description: "Kho nhận hàng"}
+      ma_ncc: {description: "Nhà cung cấp -> dw.dim_ncc"}
+      ma_sp: {description: "Mã sản phẩm"}
+      sl_nhap: {description: "Số lượng nhập"}
+      dg_nhap: {description: "Đơn giá nhập (VND)"}
+      tt_nhap: {description: "Thành tiền nhập (VND)"}
+  dw.fct_kh_dt:
+    description: "Kế hoạch (chỉ tiêu) doanh thu thuần theo tháng × cửa hàng — Phòng Tài chính."
+    synonyms: [kế hoạch, chỉ tiêu, target, budget]
+    columns:
+      thang: {description: "Tháng kế hoạch (ngày đầu tháng)"}
+      ma_cn: {description: "Mã cửa hàng"}
+      dt_ke_hoach: {description: "Doanh thu thuần kế hoạch (VND)"}
+  dw.fct_cp_mkt:
+    description: "Chi phí marketing theo tháng × kênh."
+    synonyms: [chi phí marketing, quảng cáo, marketing spend]
+    columns:
+      thang: {description: "Tháng (ngày đầu tháng)"}
+      ma_kenh: {description: "Mã kênh"}
+      chi_phi: {description: "Chi phí marketing (VND)"}
+  dw.dim_ngay:
+    description: "Lịch ngày (date dimension)."
+    synonyms: [lịch, ngày, calendar]
+    columns:
+      ngay: {description: "Ngày"}
+      nam: {description: "Năm"}
+      quy: {description: "Quý (1-4)"}
+      thang: {description: "Tháng (1-12)"}
+      tuan: {description: "Tuần ISO trong năm"}
+      thu: {description: "Thứ trong tuần ISO (1=Thứ 2 ... 7=Chủ nhật)"}
+      ten_thu: {description: "Tên thứ"}
+      cuoi_tuan: {description: "TRUE nếu Thứ 7/Chủ nhật"}
+      ngay_le: {description: "TRUE nếu là ngày lễ/nghỉ Tết"}
+      ten_le: {description: "Tên ngày lễ"}
+      nam_thang: {description: "Chuỗi YYYY-MM"}
+  dw.dim_vung:
+    description: "Vùng miền: B=Miền Bắc, T=Miền Trung, N=Miền Nam."
+    synonyms: [vùng, miền, khu vực]
+    columns:
+      ma_vung: {description: "Mã vùng (B/T/N)"}
+      ten_vung: {description: "Tên vùng"}
+  dw.dim_cn:
+    description: "Chi nhánh / cửa hàng."
+    synonyms: [cửa hàng, chi nhánh, store, siêu thị]
+    columns:
+      ma_cn: {description: "Mã cửa hàng"}
+      ten_cn: {description: "Tên cửa hàng"}
+      ma_vung: {description: "Mã vùng"}
+      tinh_tp: {description: "Tỉnh/thành phố"}
+      loai_ch: {description: "Mô hình: Flagship / Tiêu chuẩn / Mini"}
+      dt_m2: {description: "Diện tích (m²)"}
+      ngay_mo: {description: "Ngày khai trương"}
+      ngay_dong: {description: "Ngày đóng cửa (NULL nếu đang hoạt động)"}
+      ma_kho: {description: "Kho cấp hàng"}
+      trang_thai: {description: "Đang hoạt động / Đã đóng cửa"}
+  dw.dim_kho:
+    description: "Kho / trung tâm phân phối."
+    synonyms: [kho, dc, warehouse]
+    columns:
+      ma_kho: {description: "Mã kho"}
+      ten_kho: {description: "Tên kho"}
+      ma_vung: {description: "Mã vùng"}
+      tinh_tp: {description: "Tỉnh/thành"}
+  dw.dim_kenh:
+    description: "Kênh bán hàng."
+    synonyms: [kênh, channel]
+    columns:
+      ma_kenh: {description: "CH / WEB / APP / SAN"}
+      ten_kenh: {description: "Tên kênh"}
+      nhom_kenh: {description: "Offline / Online"}
+  dw.dim_nh:
+    description: "Ngành hàng (danh mục sản phẩm cấp 1)."
+    synonyms: [ngành hàng, danh mục, category]
+    columns:
+      ma_nh: {description: "Mã ngành hàng"}
+      ten_nh: {description: "Tên ngành hàng"}
+  dw.dim_sp:
+    description: "Sản phẩm (SKU)."
+    synonyms: [sản phẩm, mặt hàng, sku, product]
+    columns:
+      ma_sp: {description: "Mã sản phẩm"}
+      ten_sp: {description: "Tên sản phẩm"}
+      ma_nh: {description: "Mã ngành hàng -> dw.dim_nh"}
+      nhom_sp: {description: "Nhóm sản phẩm"}
+      thuong_hieu: {description: "Thương hiệu"}
+      gia_von: {description: "Giá vốn (VND)"}
+      gia_niem_yet: {description: "Giá bán lẻ niêm yết (VND)"}
+      ngay_ra_mat: {description: "Ngày ra mắt / mở bán"}
+      ma_ncc: {description: "Nhà cung cấp chính"}
+      trang_thai_kd: {description: "Đang KD / Ngừng KD"}
+  dw.dim_ncc:
+    description: "Nhà cung cấp."
+    synonyms: [nhà cung cấp, supplier]
+    columns:
+      ma_ncc: {description: "Mã NCC"}
+      ten_ncc: {description: "Tên NCC"}
+      quoc_gia: {description: "Quốc gia xuất xứ thương hiệu"}
+  dw.dim_km:
+    description: "Chương trình khuyến mãi."
+    synonyms: [khuyến mãi, campaign, promotion]
+    columns:
+      ma_km: {description: "Mã CTKM"}
+      ten_km: {description: "Tên chương trình"}
+      loai_km: {description: "Loại: Lễ Tết / Ngày lễ / Mùa vụ / Flash sale"}
+      tu_ngay: {description: "Ngày bắt đầu"}
+      den_ngay: {description: "Ngày kết thúc"}
+      pct_giam: {description: "Tỷ lệ giảm giá (0.1 = 10%)"}
+  dw.dim_kh:
+    description: "Khách hàng định danh (CRM). Chứa PII."
+    synonyms: [khách hàng, customer, thành viên]
+    columns:
+      ma_kh: {description: "Mã khách hàng"}
+      ho_ten: {description: "Họ tên khách hàng", sensitivity: pii}
+      gt: {description: "Giới tính: Nam / Nữ / Không rõ"}
+      nam_sinh: {description: "Năm sinh"}
+      tinh_tp: {description: "Tỉnh/thành nơi ở (đã chuẩn hóa)"}
+      ma_vung: {description: "Vùng nơi ở"}
+      hang_tv: {description: "Hạng thành viên: Thường / Bạc / Vàng / Kim cương"}
+      ngay_dk: {description: "Ngày đăng ký thành viên"}
+      sdt: {description: "Số điện thoại", sensitivity: pii}
+      email: {description: "Email", sensitivity: pii}
+  dw.dim_nv:
+    description: "Nhân viên cửa hàng (HR). Lương là dữ liệu mật."
+    synonyms: [nhân viên, nhân sự, staff]
+    columns:
+      ma_nv: {description: "Mã nhân viên"}
+      ho_ten: {description: "Họ tên nhân viên", sensitivity: pii}
+      ma_cn: {description: "Cửa hàng làm việc"}
+      chuc_vu: {description: "Chức vụ"}
+      ngay_vao: {description: "Ngày vào làm"}
+      gt: {description: "Giới tính"}
+      luong_cb: {description: "Lương cơ bản (VND/tháng)", sensitivity: confidential}
+  stg.stg_don_hang:
+    description: "[Staging] Đơn hàng hợp nhất POS + E-commerce, đã chuẩn hóa trạng thái."
+  stg.stg_ct_don_hang:
+    description: "[Staging] Dòng đơn hàng hợp nhất, đã khử trùng, có hook sửa đơn giá."
+  stg.stg_khach_hang:
+    description: "[Staging] Khách hàng chuẩn hóa tỉnh/giới tính."
+  stg.stg_tra_hang:
+    description: "[Staging] Trả hàng gắn đơn gốc."
+  raw.pos_don_hang:
+    description: "[Raw - POS] Hóa đơn bán tại cửa hàng."
+  raw.pos_ct_don_hang:
+    description: "[Raw - POS] Chi tiết hóa đơn: don_gia, so_luong, tien_ck (có thể NULL, có dòng âm)."
+  raw.ecom_orders:
+    description: "[Raw - E-commerce] Đơn online, order_date dạng chuỗi DD/MM/YYYY, status không chuẩn."
+  raw.ecom_order_items:
+    description: "[Raw - E-commerce] Dòng đơn online (có dòng trùng do ingest lại)."
+  raw.crm_khach_hang:
+    description: "[Raw - CRM] Khách hàng, tỉnh/giới tính viết nhiều kiểu, có trùng SĐT."
+  raw.erp_san_pham:
+    description: "[Raw - ERP] Danh mục sản phẩm."
+  raw.erp_ton_kho:
+    description: "[Raw - ERP] Tồn kho tuần."
+  raw.erp_nhap_kho:
+    description: "[Raw - ERP] Phiếu nhập kho."
+  raw.erp_tra_hang:
+    description: "[Raw - ERP] Phiếu trả hàng."
+  raw.hr_nhan_vien:
+    description: "[Raw - HR] Nhân viên, có lương."
+  raw.fin_ke_hoach:
+    description: "[Raw - Tài chính] Kế hoạch doanh thu."
+  raw.mkt_chi_phi:
+    description: "[Raw - Marketing] Chi phí marketing."
+  raw.pos_cua_hang:
+    description: "[Raw - POS] Danh mục cửa hàng."

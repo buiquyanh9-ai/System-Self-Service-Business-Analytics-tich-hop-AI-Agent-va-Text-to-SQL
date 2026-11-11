@@ -1,0 +1,12 @@
+# Phiên bản đã kiểm thử (Python 3.14, Windows 11). Python >= 3.11 là bắt buộc.
+fastapi==0.162.2
+uvicorn[standard]==0.54.0
+duckdb==2.0.0
+sqlglot==30.30.0
+anthropic==2.6.0
+numpy==2.5.3
+pandas==3.1.1
+scipy==1.18.1
+PyYAML==6.0.3
+pydantic==2.14.3
+pytest
