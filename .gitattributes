@@ -1,0 +1,6 @@
+# Chuẩn hóa xuống dòng LF cho mọi file văn bản
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.duckdb binary
+*.sqlite binary
