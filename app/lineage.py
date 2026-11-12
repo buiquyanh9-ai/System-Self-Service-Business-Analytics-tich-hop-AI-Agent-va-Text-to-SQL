@@ -55,15 +55,23 @@ class ModelLineage:
         return {"nodes": list(nodes.values()), "edges": edges}
 
 
+def models_file():
+    """File model biến đổi (raw -> stg -> kho phục vụ) của doanh nghiệp đang nạp.
+
+    Lineage chỉ có khi doanh nghiệp tự khai báo các bước biến đổi. Workspace nhận một kho đã dựng sẵn thì không có file
+    này, và tuyệt đối không được lấy file của doanh nghiệp khác thay vào."""
+    return config.WS_ROOT / "warehouse" / "models.sql"
+
+
 def _compute() -> dict:
     import sys
     sys.path.insert(0, str(config.ROOT))
-    from warehouse.build import load_rules, parse_models, render
+    from warehouse.build import parse_models, render
 
     schema = get_catalog().sqlglot_schema()
-    rules = load_rules()
+    rules = json.loads(config.RULES_FILE.read_text(encoding="utf-8")) if config.RULES_FILE.exists() else {"fixes": []}
     out = {}
-    for m in parse_models():
+    for m in parse_models(models_file().read_text(encoding="utf-8")):
         sql = render(m["sql_template"], rules)
         try:
             stmt = sqlglot.parse_one(sql, read="duckdb")
@@ -99,7 +107,7 @@ _key: str | None = None
 
 def _cache_key() -> str:
     h = hashlib.sha1()
-    h.update((config.ROOT / "warehouse" / "models.sql").read_bytes())
+    h.update(models_file().read_bytes())
     if config.RULES_FILE.exists():
         h.update(config.RULES_FILE.read_bytes())
     return h.hexdigest()
@@ -108,6 +116,10 @@ def _cache_key() -> str:
 def get_model_lineage() -> ModelLineage:
     global _ml, _key
     with _lock:
+        if not models_file().exists():          # doanh nghiệp không khai báo tầng biến đổi: lineage rỗng
+            if _ml is None:
+                _ml = ModelLineage({"models": {}})
+            return _ml
         key = _cache_key()
         if _ml is not None and _key == key:
             return _ml

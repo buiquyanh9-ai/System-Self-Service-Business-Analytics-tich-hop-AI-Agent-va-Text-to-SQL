@@ -212,6 +212,49 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px
   .topbar .hide-sm { display: none; }
   .msg-user { max-width: 90%; }
 }
+/* ---------- giao diện cho người mới: màn hình chào, câu trả lời bằng lời thường, chuyển chế độ */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-1); }
+.seg button { border: 0; background: none; padding: 3px 10px; font-size: 12.5px; cursor: pointer; color: var(--text-secondary); white-space: nowrap; }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+.linklike { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.empty.welcome { max-width: 860px; text-align: left; width: 100%; }
+.welcome h3 { font-size: 20px; margin: 0 0 6px; }
+.welcome .lead { font-size: 14.5px; color: var(--text-secondary); }
+.welcome .callout { margin-top: 10px; }
+.cap-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.cap { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
+.cap-t { font-weight: 650; color: var(--text-primary); }
+.cap-h { font-size: 12.5px; color: var(--text-muted); min-height: 38px; }
+.cap-q { text-align: left; border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 6px 9px; cursor: pointer; font-size: 13px; color: var(--text-primary); }
+.cap-q:hover { border-color: var(--accent); background: var(--accent-soft); }
+.welcome-foot { margin-top: 16px; font-size: 13px; color: var(--text-secondary); display: grid; gap: 4px; }
+.understood { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; font-size: 13px; }
+.understood .u-l { color: var(--text-muted); margin-right: 2px; }
+.u-chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px 8px; }
+.u-chip .k { color: var(--text-muted); margin-right: 5px; }
+.trust { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.trust .badge { white-space: normal; cursor: help; }
+.followups { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; font-size: 13px; }
+details.defs, details.how { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: var(--surface-1); }
+details.defs[open], details.how[open] { padding-bottom: 10px; }
+details.how > .meta { margin-top: 8px; }
+.def { margin-top: 8px; font-size: 13px; }
+.help { display: grid; gap: 12px; font-size: 13.5px; }
+.help ul { margin: 4px 0 0; padding-left: 18px; }
+.help-sec > b { display: block; margin-bottom: 2px; }
+.quick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.quick button { white-space: normal; min-width: 0; }
+@media (max-width: 900px) {
+  .seg button { padding: 3px 7px; }
+  .cap-grid { grid-template-columns: minmax(0, 1fr); }
+  .cap-h { min-height: 0; }
+  .topbar .brand { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .topbar .seg, .topbar .btn { flex: none; }
+  .topbar .badge.hide-sm { display: none; }
+}
+@media (max-width: 480px) {
+  .quick { grid-template-columns: minmax(0, 1fr); }
+}
 .answer, .finding, .card .bd, .kpi { min-width: 0; overflow-wrap: anywhere; }
 .mono { overflow-wrap: anywhere; }
 .view > .page { min-width: 0; }

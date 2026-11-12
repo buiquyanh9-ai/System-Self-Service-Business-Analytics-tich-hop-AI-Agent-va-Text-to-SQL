@@ -13,7 +13,15 @@ Hệ thống **không gắn với một doanh nghiệp**: mỗi doanh nghiệp l
 hỏi đánh giá riêng. Repo kèm hai doanh nghiệp mẫu thuộc hai ngành khác nhau (bán lẻ điện máy, chuyển phát) và một công
 cụ nhận kho dữ liệu mới (mục 2).
 
-![Chat](docs/screenshots/chat.png)
+![Màn hình chào](docs/screenshots/welcome.png)
+
+Giao diện có hai chế độ, chuyển bằng nút ở góc trên bên phải. **Đơn giản** (mặc định) dành cho người mới: màn hình
+chào nói trợ lý làm được gì kèm câu hỏi mẫu của chính doanh nghiệp; mỗi câu trả lời nhắc lại cách trợ lý hiểu câu hỏi,
+nêu bằng lời thường vì sao con số đáng tin, định nghĩa của chỉ số, và gợi ý câu hỏi tiếp theo; phần SQL, kiểm duyệt,
+chi phí thu gọn trong mục “Xem chi tiết kỹ thuật”. **Chuyên gia** hiện ngay các nhãn kỹ thuật và các tab như trước.
+Mọi tính năng có ở cả hai chế độ.
+
+![Câu trả lời ở chế độ Đơn giản](docs/screenshots/chat.png)
 
 ---
 
@@ -45,8 +53,9 @@ Bật LLM: chép `.env.example` thành `.env` ở gốc dự án rồi điền m
 
 Đổi chế độ/model trong trang **Cài đặt** (Admin). Không có khóa nào thì hệ thống chạy bộ luật offline.
 
-Kiểm thử: `python -m pytest -q tests` (124 test: governance, chi phí, semantic, NLU, audit số liệu, so khớp eval, vòng lặp
-gọi tool của LLM bằng client giả, các chốt chặn quanh LLM, đa doanh nghiệp, công cụ nhận kho mới). Không test nào gọi mạng.
+Kiểm thử: `python -m pytest -q tests` (141 test: governance, chi phí, semantic, NLU, audit số liệu, so khớp eval, vòng lặp
+gọi tool của LLM bằng client giả, các chốt chặn quanh LLM, đa doanh nghiệp, công cụ nhận kho mới, phần phục vụ giao
+diện thân thiện). Không test nào gọi mạng.
 
 ---
 
@@ -102,15 +111,20 @@ biến động theo các chiều khai báo hoặc tự chọn.
 
 **Giới hạn hiện tại:** thời gian phải dùng năm chiều tên `ngay, tuan, thang, quy, nam`; kho phải là DuckDB; đổi doanh
 nghiệp là khởi động một tiến trình khác chứ chưa chuyển được ngay trên giao diện; phân tích biến động chưa chỉ ra thành
-phần gây biến động cho chỉ số dạng tỷ lệ.
+phần gây biến động cho chỉ số dạng tỷ lệ; sơ đồ nguồn gốc dữ liệu chỉ có khi workspace tự khai báo các bước biến đổi
+(`warehouse/models.sql`), nên doanh nghiệp nhận một kho dựng sẵn như XYZ sẽ thấy trang đó trống kèm lời giải thích.
 
 ---
 
 ## 3. Kịch bản demo (10 phút)
 
+Tên trang và nhãn dưới đây theo chế độ **Chuyên gia**; ở chế độ Đơn giản các trang mang tên bằng lời thường (ví dụ
+“SQL Console” là “Tự viết SQL”, “Lineage” là “Nguồn gốc dữ liệu”) và các tab kỹ thuật nằm trong “Xem chi tiết kỹ thuật”.
+
 1. **analyst** → *“Doanh thu tháng trước theo miền”* → agent **hỏi lại** “doanh thu gộp hay thuần?” (2 phòng ban định
    nghĩa khác nhau) → chọn *thuần* → bảng + biểu đồ + diễn giải; badge `✓ 9/9 số liệu khớp kết quả`.
-2. Hỏi tiếp *“còn Miền Nam thì sao?”*, *“so với cùng kỳ năm ngoái”* → agent **nhớ ngữ cảnh** và lựa chọn định nghĩa.
+2. Bấm một gợi ý ở dòng **Hỏi tiếp** (*“Chia theo kênh bán”*, *“So với cùng kỳ năm trước”*) hoặc gõ *“còn Miền Nam thì
+   sao?”* → agent **nhớ ngữ cảnh** và lựa chọn định nghĩa.
 3. *“Doanh thu thuần theo cửa hàng”* (toàn bộ lịch sử, ~33 MB) → **chờ duyệt (HITL)**: xem/sửa SQL, bảng chi phí theo
    bảng/cột/phân vùng → Duyệt & chạy. Tab *Kiểm duyệt*, *Chi phí quét*, *Lineage*, *Pipeline agent*, *Kiểm chứng số liệu*.
 4. Đăng nhập **analyst_bac**, hỏi *“Doanh thu thuần theo miền tháng 10/2026”* → chỉ ra Miền Bắc (RLS tiêm vào AST).
@@ -125,7 +139,14 @@ phần gây biến động cho chỉ số dạng tỷ lệ.
 9. **Lineage**: sơ đồ raw → staging → dw; bấm cột `dw.fct_ct_dh.tt` để truy ngược tới `raw.pos_ct_don_hang.don_gia`...
 10. **Đánh giá (Eval)**: chạy bộ 41 câu → execution accuracy theo độ khó; **Tối ưu few-shot (train → dev)**.
 
-![Variance](docs/screenshots/variance.png)
+![Phân tích nguyên nhân biến động](docs/screenshots/variance.png)
+
+Doanh nghiệp thứ hai chạy cùng giao diện với nội dung của riêng mình (`.\run.ps1 -Workspace giaovan_xyz -Port 8001`):
+
+![Màn hình chào của doanh nghiệp giao vận](docs/screenshots/welcome_xyz.png)
+
+Ảnh khác trong `docs/screenshots/`: `expert.png` (chế độ Chuyên gia), `sql_console.png`, `data_quality.png`,
+`lineage.png`, `mobile.png`, `variance_xyz.png`.
 
 ---
 
@@ -245,8 +266,11 @@ Cách đọc các con số này:
 ## 8. Triển khai
 
 `Dockerfile` sinh dữ liệu lúc build (`DATA_SCALE=0.5`); `render.yaml` cho Render (Railway dùng chung Dockerfile).
-Đặt `APP_SECRET`, tùy chọn `ANTHROPIC_API_KEY`, `SUPABASE_JWT_SECRET` (đăng nhập bằng Supabase Auth, vai trò lấy từ
-`app_metadata.role`, RLS từ `app_metadata.rls`).
+Đặt `APP_SECRET`, tùy chọn `OPENROUTER_API_KEY` hoặc `ANTHROPIC_API_KEY`, `SUPABASE_JWT_SECRET` (đăng nhập bằng Supabase
+Auth, vai trò lấy từ `app_metadata.role`, RLS từ `app_metadata.rls`). Các bước chi tiết và danh sách việc phải làm trước
+khi đưa lên mạng: [docs/04-deploy-len-web.md](docs/04-deploy-len-web.md).
+
+Tài liệu cho người mới (kỹ thuật, cách dùng, cách chạy, cách deploy) nằm trong [docs/](docs/README.md).
 
 ## 9. Khác biệt so với techstack gợi ý & hướng mở rộng
 

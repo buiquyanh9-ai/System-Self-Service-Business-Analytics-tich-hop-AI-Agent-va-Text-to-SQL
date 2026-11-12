@@ -123,6 +123,7 @@ def app_config(user: UserCtx = Depends(current_user)):
             "anchor": get_catalog().anchor_date(), "profile": profile.public_summary(),
             "workspace": config.WORKSPACE or "(mặc định)", "workspaces": [w or "(mặc định)" for w in config.list_workspaces()],
             "metrics": [{"name": n, "label": m["label"], "owner": m.get("owner")} for n, m in sem.metrics.items()],
+            "dimensions": [{"name": n, "label": d["label"]} for n, d in sem.dims.items()],
             "cost": user.role_cfg.get("cost"), "hitl": config.policies().get("hitl")}
 
 

@@ -17,6 +17,8 @@ DEFAULTS = {
     "warehouse": {"engine": "DuckDB", "schema": "dw", "schema_note": "", "anchor": None, "notes": [], "core_tables": []},
     "domain_pack": None,      # gói kiểm tra theo ngành viết bằng code (vd retail_abc); không khai báo thì chỉ chạy phần tổng quát
     "quality": {"skip_drift_columns": []},     # cột không đem kiểm trôi lệch phân phối (vd trạng thái có vòng đời)
+    "console_example": "",    # câu SQL mẫu ở trang tự viết SQL; để trống thì biên dịch từ chỉ số đầu tiên
+    "console_tries": [],      # vài lệnh để người dùng thử xem hệ thống chặn thế nào
     "out_of_scope": ["dự báo tương lai hay khuyến nghị đầu tư", "sửa, xóa dữ liệu (chỉ đọc)",
                      "trả dữ liệu bị hạn chế theo vai trò của bạn", "câu hỏi ngoài dữ liệu của doanh nghiệp"],
     "sample_questions": [],
@@ -114,12 +116,75 @@ def intro_text() -> str:
     return "\n".join(lines).strip()
 
 
+STARTERS = [   # (khóa, tiêu đề, mô tả một dòng) — bốn việc chính trợ lý làm được, hiện trên màn hình chào
+    ("lookup", "Tra cứu số liệu", "Hỏi một chỉ số theo thời gian, khu vực, nhóm… và nhận bảng, biểu đồ, lời giải thích."),
+    ("compare", "So sánh và xếp hạng", "So với kỳ trước, cùng kỳ năm ngoái, hoặc tìm top đầu, top cuối."),
+    ("why", "Tìm nguyên nhân", "Hỏi vì sao một chỉ số tăng hay giảm; trợ lý phân rã theo từng chiều và kiểm định."),
+    ("define", "Hỏi định nghĩa", "Một chỉ số được tính thế nào, do bộ phận nào chịu trách nhiệm."),
+]
+_DEFINE = re.compile(r"\b(la gi|dinh nghia|duoc tinh (nhu the nao|the nao|ra sao)|cong thuc|nghia la gi)\b")
+_COMPARE = re.compile(r"\b(so voi|so sanh|cung ky|top|cao nhat|thap nhat|nhieu nhat|it nhat|ban chay|tot nhat|xep hang)\b")
+
+
+def starter_groups(per_group: int = 3) -> list[dict]:
+    """Câu hỏi mẫu của doanh nghiệp chia theo bốn việc trợ lý làm được. Nhóm nào trống thì tự đặt một câu từ semantic layer."""
+    from .nlu import is_why_question
+    groups = {k: [] for k, _, _ in STARTERS}
+    for q in sample_questions():
+        n = norm(q)
+        key = "why" if is_why_question(q) else "define" if _DEFINE.search(n) else "compare" if _COMPARE.search(n) else "lookup"
+        groups[key].append(q)
+    sem = _semantic()
+    first = next(iter(sem.metrics.items()), None)
+    if first:
+        name, m = first
+        label = m["label"]
+        dim = next((d for dn, d in sem.dims.items() if d.get("kind") != "time" and dn in sem.dims_for_metric(name)), None)
+        auto = {"lookup": f"{label} theo {dim['label'].lower()}" if dim else label,
+                "compare": f"Top 5 {dim['label'].lower()} có {label.lower()} cao nhất" if dim else f"{label} so với kỳ trước",
+                "why": f"Vì sao {label.lower()} tháng trước thay đổi?",
+                "define": f"{label} là gì?"}
+        for k, qs in groups.items():
+            if not qs:
+                qs.append(auto[k])
+    return [{"key": k, "title": t, "hint": hint, "questions": groups[k][:per_group]} for k, t, hint in STARTERS if groups[k]]
+
+
+def console_example() -> str:
+    """Câu SQL mẫu cho trang tự viết SQL: lấy từ hồ sơ nếu có, không thì biên dịch từ chỉ số đầu tiên của semantic layer."""
+    p = get_profile()
+    if p.get("console_example"):
+        return p["console_example"].strip()
+    sem = _semantic()
+    for name in sem.metrics:
+        dim = next((d for d, x in sem.dims.items() if x.get("kind") != "time" and d in sem.dims_for_metric(name)), None)
+        try:
+            return sem.compile({"metrics": [name], "dimensions": [dim] if dim else [], "limit": 10})["sql"]
+        except Exception:
+            continue
+    return "SELECT 1"
+
+
+def console_tries() -> list[str]:
+    p = get_profile()
+    if p.get("console_tries"):
+        return list(p["console_tries"])
+    a = anchor()
+    return ([f"DROP TABLE {a[0]}"] if a else []) + ["SELECT * FROM read_csv('x.csv')"]
+
+
 def public_summary() -> dict:
     """Thông tin hồ sơ gửi cho giao diện (màn hình chào, tiêu đề)."""
     p = get_profile()
+    sem = _semantic()
     return {"company": p["company"]["name"], "short_name": p["company"].get("short_name") or "",
+            "schema": p["warehouse"]["schema"], "console_example": console_example(), "console_tries": console_tries(),
             "industry": p["company"].get("industry") or "", "description": p["company"].get("description") or "",
-            "assistant": p["assistant"]["name"], "intro": intro_text(), "out_of_scope": list(p["out_of_scope"])}
+            "assistant": p["assistant"]["name"], "intro": intro_text(), "out_of_scope": list(p["out_of_scope"]),
+            "areas": [m.get("label") or n for n, m in sem.models.items()],
+            "n_metrics": len(sem.metrics), "n_dimensions": sum(1 for d in sem.dims.values() if d.get("kind") != "time"),
+            "metric_examples": [m["label"] for m in list(sem.metrics.values())[:8]],
+            "starters": starter_groups()}
 
 
 def anchor() -> tuple[str, str] | None:

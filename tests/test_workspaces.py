@@ -50,6 +50,17 @@ v = validate("SELECT h.region, COUNT(*) FROM mart.fact_shipment s JOIN mart.dim_
 out["rls_rows"] = get_warehouse().execute(v.sql_exec)["rows"]
 out["lint"] = [l["code"] for l in __import__("app.sqlcheck", fromlist=["lint"]).lint(validate("SELECT SUM(shipping_fee) FROM mart.fact_shipment", admin))]
 out["dq"] = sorted({f["check"] for f in dq.run_checks()["findings"]})
+from app.lineage import get_model_lineage
+out["lineage_nodes"] = [n["id"] for n in get_model_lineage().graph()["nodes"]]
+summary = profile.public_summary()
+out["console_example"], out["console_tries"] = summary["console_example"], summary["console_tries"]
+out["console_example_ok"] = validate(summary["console_example"], admin).ok
+out["starters"] = {}
+for g in summary["starters"]:
+    for q in g["questions"]:
+        cid = store.create_conversation("admin", "t")
+        out["starters"][q] = agent.ask(admin, cid, q, eval_mode=True, mode="offline")["type"]
+        store.delete_conversation(cid)
 print("PROBE=" + json.dumps(out, ensure_ascii=False, default=str))
 """
 
@@ -121,6 +132,22 @@ def test_second_business_governance_follows_its_own_policies(xyz):
 
 def test_second_business_gets_generic_data_quality_checks(xyz):
     assert "freshness" in xyz["dq"] and "distribution_drift" in xyz["dq"]
+
+
+def test_second_business_never_shows_the_other_business_lineage(xyz):
+    """Workspace nhận kho dựng sẵn không có models.sql: sơ đồ nguồn gốc phải rỗng, không được lấy của doanh nghiệp mẫu ở gốc."""
+    assert xyz["lineage_nodes"] == []
+    assert not (XYZ / "var" / "model_lineage.json").exists()
+
+
+def test_second_business_sql_page_uses_its_own_example(xyz):
+    assert "mart.fact_shipment" in xyz["console_example"] and "dw." not in xyz["console_example"] and xyz["console_example_ok"]
+    assert xyz["console_tries"][0] == "DROP TABLE mart.fact_shipment"
+
+
+def test_second_business_welcome_questions_all_get_answers(xyz):
+    assert len(xyz["starters"]) >= 4
+    assert all(t in ("result", "variance", "info", "clarification") for t in xyz["starters"].values()), xyz["starters"]
 
 
 # ------------------------------------------------------------------ phân tích biến động không cần khai báo

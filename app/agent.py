@@ -213,10 +213,10 @@ class Agent:
                 return self._plan_with_claude(s)
             except (llm.LLMUnavailable, llm.LLMError) as e:
                 s["notes"].append(f"Không dùng được {name} ({e}). Chuyển sang bộ hiểu ngôn ngữ offline.")
-                s["mode"] = "offline"
+                s["mode"], s["llm_fallback"] = "offline", f"{name}: {e}"
             except Exception as e:  # pragma: no cover
                 s["notes"].append(f"Lỗi khi gọi {name} ({type(e).__name__}). Chuyển sang chế độ offline.")
-                s["mode"] = "offline"
+                s["mode"], s["llm_fallback"] = "offline", f"{name}: {type(e).__name__}"
         # 3) NLU offline
         r = get_nlu().parse(q, s["memory"])
         s["intent"], s["plan"], s["chart_hint"] = r.intent, r.plan, r.chart_hint
@@ -450,9 +450,13 @@ class Agent:
             s["text"] = profile.intro_text()
             s["suggestions"] = profile.sample_questions()[:6]
         else:
-            s["text"] = ("Mình chưa xác định được chỉ số bạn cần. Bạn có thể hỏi về: " +
-                         ", ".join(m["label"].lower() for m in list(sem.metrics.values())[:12]) +
-                         "... Hoặc thử một câu mẫu bên dưới." + (" (Bật LLM — Claude hoặc OpenRouter — để hỏi câu tự do ngoài semantic layer.)" if s["mode"] == "offline" else ""))
+            labels = [m["label"].lower() for m in sem.metrics.values()]
+            s["text"] = ("Mình chưa hiểu câu này muốn xem số liệu nào. Mình trả lời được các câu hỏi về: " +
+                         ", ".join(labels[:12]) + ("…" if len(labels) > 12 else "") +
+                         ". Bạn thử nêu rõ chỉ số và thời gian, hoặc bắt đầu từ một câu mẫu bên dưới.")
+            if s["mode"] == "offline":
+                s["text"] += ("\n\nHiện trợ lý đang trả lời bằng bộ luật có sẵn nên chỉ hiểu các câu về chỉ số đã định nghĩa. "
+                              "Quản trị viên có thể bật mô hình ngôn ngữ trong trang Cài đặt để hỏi tự do hơn.")
             s["suggestions"] = SAMPLE_QUESTIONS[:5]
         s["_detail"] = f"Trả lời thông tin ({intent})"
         return "finalize"
@@ -710,7 +714,54 @@ class Agent:
         for k in ("metric_cards", "schema_tables", "suggestions"):
             if s.get(k):
                 resp[k] = s[k]
+        # phần dành cho giao diện thân thiện: câu này có phải do bộ luật trả lời thay LLM không, chỉ số được tính theo
+        # định nghĩa nào, và có thể hỏi tiếp điều gì (đều dựng bằng code từ kế hoạch vừa chạy)
+        resp["fallback"] = s.get("llm_fallback")
+        if s["status"] == "success":
+            resp["definitions"] = _definitions(s)
+            resp["follow_ups"] = _follow_ups(s)
         return resp
+
+
+def _definitions(s) -> list[dict]:
+    """Định nghĩa các chỉ số có trong câu trả lời (theo semantic layer), để người dùng biết con số được tính thế nào."""
+    sem = get_semantic()
+    names = list((s.get("plan") or {}).get("metrics") or []) or [m["metric"] for m in s.get("metrics_matched") or []]
+    return [{"name": n, "label": sem.metrics[n]["label"], "description": sem.metrics[n].get("description") or "",
+             "owner": sem.metrics[n].get("owner") or ""} for n in dict.fromkeys(names) if n in sem.metrics]
+
+
+def _follow_ups(s, limit: int = 4) -> list[str]:
+    """Gợi ý câu hỏi tiếp theo cho kết quả vừa trả. Chỉ gợi ý điều hệ thống chắc chắn làm được: chia theo một chiều mà chỉ số
+    hỗ trợ, so với cùng kỳ, tìm nguyên nhân biến động. Câu gợi ý viết theo dạng bộ luật hiểu được khi nối tiếp hội thoại."""
+    from .nlu import _period_label
+    sem, plan = get_semantic(), s.get("plan") or {}
+    metric = next((m for m in plan.get("metrics") or [] if m in sem.metrics), None)
+    if not metric:
+        return []
+    mdef = sem.metrics[metric]
+    label = mdef["label"].lower()
+    cfg = insights.analysis_config(sem, metric)
+    used = set(plan.get("dimensions") or []) | {f["dimension"] for f in plan.get("filters") or []}
+    tr = plan.get("time_range") or {}
+    period = None
+    if tr.get("start") and tr.get("end"):
+        p = _period_label(dt.date.fromisoformat(tr["start"]), dt.date.fromisoformat(tr["end"]))
+        period = p if re.fullmatch(r"T\d{1,2}/\d{4}|Q[1-4]/\d{4}|năm \d{4}", p) else None
+    out = []
+    if s.get("variance"):
+        best = s["variance"].get("best_dimension")
+        if best in sem.dims and period:
+            out.append(f"{mdef['label']} theo {sem.dims[best]['label'].lower()} {period}")
+        out += [f"Chia theo {sem.dims[d]['label'].lower()}" for d in cfg["drivers"] if d not in used and d != best][:1]
+        return out[:limit]
+    out += [f"Chia theo {sem.dims[d]['label'].lower()}" for d in cfg["drivers"] if d not in used][:2]
+    if tr and not plan.get("compare"):
+        out.append("So với cùng kỳ năm trước")
+    additive = mdef.get("additive", mdef.get("type") != "derived" and mdef.get("format") != "percent")
+    if period and additive:
+        out.append(f"Tìm nguyên nhân biến động {label} {period}")
+    return out[:limit]
 
 
 def _cost_public(c):

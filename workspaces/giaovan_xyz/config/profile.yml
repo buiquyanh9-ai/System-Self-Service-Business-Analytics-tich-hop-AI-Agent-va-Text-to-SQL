@@ -33,6 +33,12 @@ warehouse:
 quality:
   skip_drift_columns: [status]
 
+# Trang tự viết SQL: vài lệnh sẽ bị chặn để người dùng thử (sửa dữ liệu, cột nhạy cảm, đọc file)
+console_tries:
+  - DROP TABLE mart.fact_shipment
+  - SELECT phone FROM mart.dim_customer
+  - SELECT * FROM read_csv('x.csv')
+
 out_of_scope:
   - dự báo tương lai hay khuyến nghị đầu tư
   - sửa, xóa dữ liệu (chỉ đọc)

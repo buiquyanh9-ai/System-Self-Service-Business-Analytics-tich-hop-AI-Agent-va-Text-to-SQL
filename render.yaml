@@ -8,7 +8,11 @@ services:
     envVars:
       - key: APP_SECRET
         generateValue: true
-      - key: ANTHROPIC_API_KEY     # để trống -> chạy chế độ offline NLU
+      - key: OPENROUTER_API_KEY    # để trống cả hai khóa -> chạy bộ luật offline
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-6-luna
+      - key: ANTHROPIC_API_KEY
         sync: false
       - key: LLM_MODE
         value: auto

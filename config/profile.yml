@@ -36,6 +36,22 @@ warehouse:
 # vẫn chạy phần kiểm tra tổng quát dựng từ catalog và semantic layer.
 domain_pack: retail_abc
 
+# Trang tự viết SQL: câu mẫu cố ý dùng sai tên cột (thanh_tien) và điều kiện YEAR() để người dùng thấy hệ thống
+# tự sửa tên cột theo catalog và cảnh báo mất cắt phân vùng; kèm vài lệnh sẽ bị chặn.
+console_example: |
+  SELECT cn.ten_cn, SUM(f.thanh_tien) AS doanh_thu
+  FROM dw.fct_ct_dh f
+  JOIN dw.dim_cn cn ON cn.ma_cn = f.ma_cn
+  WHERE YEAR(f.ngay_dh) = 2026
+  GROUP BY 1
+  ORDER BY 2 DESC
+  LIMIT 10
+console_tries:
+  - DROP TABLE dw.fct_dh
+  - SELECT * FROM dw.dim_kh
+  - SELECT * FROM read_csv('x.csv')
+  - SUM(d.tong_tt) JOIN fct_ct_dh
+
 # Việc trợ lý không làm; hiện trong lời tự giới thiệu
 out_of_scope:
   - dự báo tương lai hay khuyến nghị đầu tư

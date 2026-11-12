@@ -237,7 +237,7 @@ function detailTabs(r) {
       (r.lint || []).filter(l => l.severity === "info").map(l => h("div", { class: "callout info" }, h("code", {}, l.code), " ", l.message))) },
     r.cost && r.cost.tables && r.cost.tables.length && { label: "Chi phí quét", render: () => costView(r.cost) },
     r.lineage && r.lineage.length && { label: "Lineage", render: () => h("div", { class: "tbl-wrap" }, h("table", { class: "tbl" },
-      h("thead", {}, h("tr", {}, h("th", {}, "Cột kết quả"), h("th", {}, "Nguồn trong kho (dw)"), h("th", {}, "Nguồn gốc (raw)"))),
+      h("thead", {}, h("tr", {}, h("th", {}, "Cột kết quả"), h("th", {}, "Lấy từ cột nào trong kho"), h("th", {}, "Dữ liệu gốc (nếu có khai báo)"))),
       h("tbody", {}, r.lineage.map(l => h("tr", {}, h("td", {}, h("b", {}, l.column)), h("td", { class: "mono" }, l.sources.join("\n")), h("td", { class: "mono", style: { whiteSpace: "pre-line" } }, l.raw_sources.join("\n"))))))) },
     { label: "Pipeline agent", render: () => h("div", {}, h("div", { class: "steps" }, (r.trace || []).map((t, i) => [i ? h("span", { class: "muted" }, "→") : null, h("span", { class: "step" }, t.node, " ", h("span", { class: "ms" }, t.ms + "ms"))])),
       h("div", { class: "trace-list", style: { marginTop: "8px" } }, (r.trace || []).filter(t => t.detail).map(t => h("div", {}, h("b", {}, t.node + ": "), t.detail))),
@@ -278,13 +278,72 @@ function feedbackRow(r) {
   return box;
 }
 
+// ---- phần hiển thị cho người mới (chế độ Đơn giản): nói bằng lời thường, chi tiết kỹ thuật thu vào trong
+function understanding(r) {
+  const p = r.plan; if (!p || !(p.metrics || []).length) return null;
+  const ml = Object.fromEntries((S.cfg.metrics || []).map(m => [m.name, m.label]));
+  const dl = Object.fromEntries((S.cfg.dimensions || []).map(d => [d.name, d.label]));
+  const span = t => t.label || ((t.start || "…") + " đến trước " + (t.end || "…"));
+  const parts = [["Chỉ số", p.metrics.map(m => ml[m] || m).join(", ")]];
+  if ((p.dimensions || []).length) parts.push(["Chia theo", p.dimensions.map(d => dl[d] || d).join(", ")]);
+  (p.filters || []).forEach(f => parts.push([dl[f.dimension] || f.dimension, (f.op === "not_in" ? "khác " : f.op === "like" ? "có chứa " : "") + (f.values || []).join(", ")]));
+  if (p.time_range && (p.time_range.label || p.time_range.start)) parts.push(["Thời gian", span(p.time_range)]);
+  const cmp = p.compare || p.variance_compare; if (cmp) parts.push(["So với", span(cmp)]);
+  if (p.limit) parts.push(["Lấy", p.limit + " dòng đầu"]);
+  return h("div", { class: "understood" }, h("span", { class: "u-l" }, "Mình hiểu câu hỏi là"),
+    parts.map(([k, v]) => h("span", { class: "u-chip" }, h("span", { class: "k" }, k), v)));
+}
+function plainNotes(r) {
+  const out = [understanding(r)];
+  if (r.assumptions && r.assumptions.length) out.push(h("div", { class: "callout info" }, h("span", {}, "ℹ️"), h("div", {}, h("b", {}, "Mình đã tự hiểu thêm: "), h("ul", {}, r.assumptions.map(a => h("li", {}, a))))));
+  const notes = (r.notes || []).filter(n => !/offline/.test(n));     // chuyện rơi về bộ luật đã có cảnh báo riêng
+  const lint = (r.lint || []).filter(l => l.severity !== "info");
+  if (notes.length || lint.length) out.push(h("div", { class: "callout " + (lint.length ? "warn" : "info") }, h("span", {}, lint.length ? "⚠️" : "📝"), h("div", {}, h("b", {}, "Lưu ý khi đọc kết quả: "),
+    h("ul", {}, lint.map(l => h("li", {}, l.message, l.hint ? h("span", { class: "muted" }, " " + l.hint) : null)), notes.map(a => h("li", {}, a))))));
+  return out.filter(Boolean);
+}
+function trustLine(r) {
+  const items = [];
+  if (r.audit) items.push(r.audit.ok ? ["ok", "✓ Mọi con số trong lời giải thích khớp với kết quả truy vấn", "Hệ thống tính lại từng con số từ bảng kết quả và so với lời giải thích."]
+    : ["err", "✗ Có con số chưa đối chiếu được", "Hãy dựa vào bảng kết quả, không dựa vào lời giải thích."]);
+  const src = r.sql_source;
+  if (src === "semantic" || src === "semantic+repair" || src === "fewshot") items.push(["ok", "📐 Tính theo định nghĩa chỉ số chung của công ty", "Công thức lấy từ danh mục chỉ số, không do trợ lý tự nghĩ ra."]);
+  else if (src === "llm") items.push(["warn", "✍️ Câu này trợ lý tự viết truy vấn — nên xem lại cách tính", "Câu hỏi nằm ngoài các chỉ số định nghĩa sẵn. Bấm “Xem chi tiết kỹ thuật” để kiểm tra."]);
+  if (r.validation && (r.validation.rls_applied || []).length) items.push(["info", "🔒 Chỉ gồm dữ liệu bạn được phép xem", "Kết quả đã được lọc theo phạm vi của tài khoản."]);
+  if (r.truncated) items.push(["warn", "Bảng đã được cắt bớt", "Kết quả có nhiều dòng hơn giới hạn hiển thị."]);
+  if (r.repairs && r.repairs.length) items.push(["info", "🔧 Đã tự sửa truy vấn " + r.repairs.length + " lần", "Truy vấn ban đầu có lỗi và đã được sửa tự động trước khi chạy."]);
+  items.push(["", "⏱ " + nf1.format((r.elapsed_ms || 0) / 1000) + " giây", "Thời gian xử lý"]);
+  return h("div", { class: "trust" }, items.map(([cls, text, tip]) => h("span", { class: "badge " + cls, title: tip }, text)));
+}
+function definitionsBox(r) {
+  if (!(r.definitions || []).length) return null;
+  return h("details", { class: "defs" }, h("summary", {}, "Chỉ số này được tính thế nào?"),
+    r.definitions.map(d => h("div", { class: "def" }, h("b", {}, d.label), d.owner ? h("span", { class: "muted" }, " · " + d.owner) : null, h("div", {}, d.description || "Chưa có mô tả."))));
+}
+function followUps(r) {
+  if (!(r.follow_ups || []).length) return null;
+  return h("div", { class: "followups" }, h("span", { class: "muted" }, "Hỏi tiếp:"), r.follow_ups.map(s => h("button", { class: "chip", onclick: () => sendMessage(s) }, s)));
+}
+function howBox(r) {
+  return h("details", { class: "how" }, h("summary", {}, "Xem chi tiết kỹ thuật: câu lệnh SQL, các bước kiểm tra, chi phí"), metaBadges(r), detailTabs(r));
+}
+function fallbackNote(r) {
+  if (!r.fallback) return null;
+  return h("div", { class: "callout warn" }, h("span", {}, "⚠️"), h("div", {}, h("b", {}, "Câu này do bộ luật có sẵn trả lời, không phải mô hình ngôn ngữ. "),
+    "Mô hình tạm thời không dùng được, nên kết quả có thể chưa sát ý câu hỏi. Hãy đối chiếu với phần “Mình hiểu câu hỏi là”.",
+    h("div", { class: "muted", style: { fontSize: "12px" } }, r.fallback)));
+}
+
 function renderAnswer(r, ctx = {}) {
   const card = h("div", { class: "card msg-bot" });
   const body = h("div", { class: "answer" });
+  const rawAppend = body.append.bind(body);     // phần nào không có (null) thì bỏ qua, không in chữ "null" ra màn hình
+  body.append = (...kids) => rawAppend(...kids.flat(Infinity).filter(k => k != null && k !== false));
   card.append(body);
   const T = r.type;
   if (T === "clarification") {
     body.append(h("div", { class: "txt" }, "🤔 ", r.text));
+    if (S.simple) body.append(h("div", { class: "sec", style: { fontSize: "13px", marginTop: "4px" } }, "Mình hỏi lại vì mỗi cách hiểu cho ra một con số khác nhau. Chọn một cách để mình trả lời đúng ý bạn:"));
     const opts = h("div", { class: "opts" });
     (r.clarification.options || []).forEach((o, i) => opts.append(h("button", { class: "btn", onclick: e => {
       [...opts.children].forEach(b => (b.disabled = true)); e.target.classList.add("primary");
@@ -294,9 +353,16 @@ function renderAnswer(r, ctx = {}) {
     return card;
   }
   if (T === "pending_approval") {
-    body.append(h("div", { class: "txt" }, h("b", {}, "⏸ Cần xác nhận trước khi chạy (Human-in-the-loop)")), h("div", { class: "sec", style: { marginTop: "4px" } }, r.text));
-    body.append(metaBadges(r), ...callouts(r));
-    if (r.cost) body.append(h("div", { style: { marginTop: "8px" } }, costView(r.cost)));
+    if (S.simple) {
+      body.append(h("div", { class: "txt" }, h("b", {}, "⏸ Mình cần bạn đồng ý trước khi chạy")),
+        h("div", { class: "sec", style: { marginTop: "4px" } }, "Câu hỏi này phải đọc khá nhiều dữ liệu" + (r.cost && r.cost.human ? " (khoảng " + r.cost.human + ")" : "") +
+          ". Với truy vấn cỡ này hệ thống luôn dừng lại để người hỏi xác nhận, tránh chạy nhầm một truy vấn nặng. Nếu cách hiểu bên dưới đúng ý bạn, bấm “Đồng ý chạy”."),
+        fallbackNote(r), ...plainNotes(r));
+    } else {
+      body.append(h("div", { class: "txt" }, h("b", {}, "⏸ Cần xác nhận trước khi chạy (Human-in-the-loop)")), h("div", { class: "sec", style: { marginTop: "4px" } }, r.text));
+      body.append(metaBadges(r), ...callouts(r));
+      if (r.cost) body.append(h("div", { style: { marginTop: "8px" } }, costView(r.cost)));
+    }
     const ta = h("textarea", { rows: Math.min(18, (r.sql || "").split("\n").length + 1), class: "mono", style: { marginTop: "10px" } }, r.sql || "");
     const msg = h("div", {});
     const act = async (action) => {
@@ -306,15 +372,25 @@ function renderAnswer(r, ctx = {}) {
       catch (e) { msg.replaceChildren(h("div", { class: "callout err" }, e.message)); }
     };
     const btns = h("div", { class: "row", style: { marginTop: "8px" } },
-      h("button", { class: "btn primary", onclick: () => act("approve") }, "✓ Duyệt & chạy"),
-      h("button", { class: "btn danger", onclick: () => act("reject") }, "✕ Từ chối"),
-      h("span", { class: "muted", style: { fontSize: "12.5px" } }, "Bạn có thể chỉnh SQL — bản sửa sẽ được kiểm duyệt lại (cú pháp, phân quyền, chi phí)."));
-    body.append(h("div", { class: "muted", style: { marginTop: "10px", fontSize: "12.5px" } }, "SQL sẽ chạy:"), ta, btns, msg, detailTabs(r));
+      h("button", { class: "btn primary", onclick: () => act("approve") }, S.simple ? "✓ Đồng ý chạy" : "✓ Duyệt & chạy"),
+      h("button", { class: "btn danger", onclick: () => act("reject") }, S.simple ? "✕ Không chạy" : "✕ Từ chối"),
+      S.simple ? null : h("span", { class: "muted", style: { fontSize: "12.5px" } }, "Bạn có thể chỉnh SQL — bản sửa sẽ được kiểm duyệt lại (cú pháp, phân quyền, chi phí)."));
+    if (S.simple) body.append(btns, msg,
+      h("details", { class: "how" }, h("summary", {}, "Xem hoặc sửa câu lệnh SQL sẽ chạy"), ta, h("div", { class: "muted", style: { fontSize: "12.5px", marginTop: "4px" } }, "Nếu bạn sửa, câu lệnh mới sẽ được kiểm tra lại về quyền truy cập và chi phí trước khi chạy.")),
+      howBox(r));
+    else body.append(h("div", { class: "muted", style: { marginTop: "10px", fontSize: "12.5px" } }, "SQL sẽ chạy:"), ta, btns, msg, detailTabs(r));
     return card;
   }
   if (T === "error" || T === "blocked") {
     body.append(h("div", { class: "callout err" }, h("span", {}, T === "blocked" ? "⛔" : "⚠️"), h("div", {}, h("b", {}, T === "blocked" ? "Đã chặn: " : "Không thực hiện được: "), r.text || r.error)));
-    body.append(...callouts(r), metaBadges(r));
+    if (S.simple) {
+      body.append(fallbackNote(r), ...plainNotes(r));
+      if (T === "blocked") body.append(h("div", { class: "sec", style: { fontSize: "13px", marginTop: "8px" } }, "Yêu cầu này nằm ngoài quyền của tài khoản hoặc ngoài những việc trợ lý được phép làm (trợ lý chỉ đọc dữ liệu, không sửa, không xóa)."));
+      else body.append(h("div", { class: "followups" }, h("span", { class: "muted" }, "Thử diễn đạt lại, hoặc bắt đầu từ một câu mẫu:"), (S.cfg.samples || []).slice(0, 3).map(s => h("button", { class: "chip", onclick: () => sendMessage(s) }, s))));
+      if (r.sql || r.validation) body.append(howBox(r));
+      return card;
+    }
+    body.append(fallbackNote(r), ...callouts(r), metaBadges(r));
     if (r.sql || r.validation) body.append(detailTabs(r));
     return card;
   }
@@ -330,8 +406,9 @@ function renderAnswer(r, ctx = {}) {
     return card;
   }
   // ---------------- result / variance
-  body.append(h("div", { class: "txt", html: md(r.text) }));
-  body.append(metaBadges(r), ...callouts(r));
+  body.append(h("div", { class: "txt", html: md(r.text) }), fallbackNote(r));
+  if (S.simple) body.append(...plainNotes(r));
+  else body.append(metaBadges(r), ...callouts(r));
   if (T === "variance") body.append(varianceView(r));
   else {
     const viz = h("div", {});
@@ -342,7 +419,8 @@ function renderAnswer(r, ctx = {}) {
         h("button", { class: "btn sm", onclick: () => downloadCSV(r.columns, r.rows) }, "⬇ CSV")), dataTable(r.columns, r.rows, r.columns_meta, r.chart && r.chart.highlights));
     }
   }
-  body.append(detailTabs(r), feedbackRow(r));
+  if (S.simple) body.append(trustLine(r), definitionsBox(r), followUps(r), howBox(r), feedbackRow(r));
+  else body.append(followUps(r), detailTabs(r), feedbackRow(r));
   return card;
 }
 
@@ -354,9 +432,11 @@ function varianceView(r) {
     h("div", { class: "kpi" }, h("div", { class: "l" }, v.metric_label + " · " + v.period_now.label), h("div", { class: "v" }, fmtCompact(t.now, f))),
     h("div", { class: "kpi" }, h("div", { class: "l" }, v.metric_label + " · " + v.period_prev.label), h("div", { class: "v" }, fmtCompact(t.prev, f))),
     h("div", { class: "kpi" }, h("div", { class: "l" }, "Chênh lệch"), h("div", { class: "v" }, (t.delta >= 0 ? "+" : "") + fmtCompact(t.delta, f)), h("div", { class: "d" }, t.pct == null ? "" : (t.pct >= 0 ? "▲ +" : "▼ ") + nf1.format(t.pct) + "%")),
-    v.significance ? h("div", { class: "kpi" }, h("div", { class: "l" }, "Kiểm định bất thường"), h("div", { class: "v" }, "z = " + nfa.format(v.significance.z)), h("div", { class: "d" }, "p = " + v.significance.p_value + (v.significance.significant ? " · bất thường" : " · bình thường"))) : null));
+    v.significance && S.simple ? h("div", { class: "kpi", title: "So mức biến động này với các lần biến động trước đó của chính chỉ số này." }, h("div", { class: "l" }, "So với dao động thường thấy"),
+      h("div", { class: "v" }, v.significance.significant ? "Bất thường" : "Bình thường"), h("div", { class: "d" }, "dựa trên " + v.significance.n_history + " kỳ trước (z = " + nfa.format(v.significance.z) + ")")) :
+    v.significance ? h("div", { class: "kpi" }, h("div", { class: "l" }, "Kiểm định bất thường"), h("div", { class: "v" }, "z = " + nfa.format(v.significance.z)), h("div", { class: "d" },"p = " + v.significance.p_value + (v.significance.significant ? " · bất thường" : " · bình thường"))) : null));
   const causes = (v.root_causes || []).filter(c => c.kind !== "significance");
-  if (causes.length) wrap.append(h("div", { style: { marginTop: "12px" } }, h("b", {}, "Kiểm tra nguyên nhân gốc (xác định bằng code)"),
+  if (causes.length) wrap.append(h("div", { style: { marginTop: "12px" } }, h("b", {}, S.simple ? "Nguyên nhân tìm thấy khi kiểm tra dữ liệu" : "Kiểm tra nguyên nhân gốc (xác định bằng code)"),
     causes.map(c => h("div", { class: "finding " + (c.severity === "critical" ? "critical" : c.severity === "warning" ? "warning" : "info"), style: { marginTop: "8px" } },
       h("div", { class: "row" }, sevIcon(c.severity === "critical" ? "critical" : c.severity === "warning" ? "warning" : "info"), h("b", {}, c.title),
         h("span", { class: "badge" }, { data_quality: "Chất lượng dữ liệu", business: "Kinh doanh", calendar: "Lịch / mùa vụ", info: "Khác" }[c.kind] || c.kind)),
@@ -369,13 +449,13 @@ function varianceView(r) {
       h("td", { class: "num" }, fmtCell(i.delta, f)), h("td", { class: "num" }, i.pct == null ? "—" : nf1.format(i.pct) + "%"), h("td", { class: "num" }, i.contribution_pct == null ? "—" : nf1.format(i.contribution_pct) + "%"))))));
   wrap.append(tabs([
     ...(v.drivers || []).map(d => ({ label: "Theo " + d.label.toLowerCase() + (d.dimension === v.best_dimension ? " ★" : ""), render: () => h("div", {}, h("div", { class: "muted", style: { fontSize: "12.5px", marginBottom: "6px" } }, `Thành phần dẫn đầu giải thích ${nf1.format(d.top_share * 100)}% biến động (tỷ trọng gốc ${nf1.format(d.base_share * 100)}%).`), mkTbl(d.items)) })),
-    ...(v.drill || []).map(d => ({ label: "Drill: " + d.within + " × " + d.label.toLowerCase(), render: () => mkTbl(d.items) })),
-    v.decomposition && { label: "Sản lượng × giá trị", render: () => { const x = v.decomposition; return h("div", { class: "kpis" },
-      h("div", { class: "kpi" }, h("div", { class: "l" }, "Số đơn (" + x.segment + ")"), h("div", { class: "v" }, nf0.format(x.orders_now)), h("div", { class: "d" }, "kỳ trước " + nf0.format(x.orders_prev) + " · " + nf1.format(x.orders_pct) + "%")),
-      h("div", { class: "kpi" }, h("div", { class: "l" }, "Giá trị đơn TB"), h("div", { class: "v" }, fmtCompact(x.aov_now, "currency")), h("div", { class: "d" }, "kỳ trước " + fmtCompact(x.aov_prev, "currency") + " · " + nf1.format(x.aov_pct) + "%")),
-      h("div", { class: "kpi" }, h("div", { class: "l" }, "Hiệu ứng số đơn"), h("div", { class: "v" }, fmtCompact(x.volume_effect, "currency"))),
-      h("div", { class: "kpi" }, h("div", { class: "l" }, "Hiệu ứng giá trị đơn"), h("div", { class: "v" }, fmtCompact(x.value_effect, "currency")))); } },
-    { label: `Truy vấn đã chạy (${(v.queries || []).length})`, render: () => h("div", {}, (v.queries || []).map(q => h("details", {}, h("summary", {}, q.purpose, " · ", h("span", { class: "muted" }, fmtBytes(q.bytes) + " · " + q.rows + " dòng · " + q.ms + "ms")), codeBlock(q.sql)))) },
+    ...(v.drill || []).map(d => ({ label: (S.simple ? "Bên trong " + d.within + ": theo " : "Drill: " + d.within + " × ") + d.label.toLowerCase(), render: () => mkTbl(d.items) })),
+    v.decomposition && { label: S.simple ? "Do số lượng hay do giá trị?" : "Sản lượng × giá trị", render: () => { const x = v.decomposition, cl = x.count_label || "số đơn", vl = x.value_label || "giá trị đơn trung bình", cap = s => s.charAt(0).toUpperCase() + s.slice(1); return h("div", { class: "kpis" },
+      h("div", { class: "kpi" }, h("div", { class: "l" }, cap(cl) + " (" + x.segment + ")"), h("div", { class: "v" }, nf0.format(x.orders_now)), h("div", { class: "d" }, "kỳ trước " + nf0.format(x.orders_prev) + " · " + nf1.format(x.orders_pct) + "%")),
+      h("div", { class: "kpi" }, h("div", { class: "l" }, cap(vl)), h("div", { class: "v" }, fmtCompact(x.aov_now, "currency")), h("div", { class: "d" }, "kỳ trước " + fmtCompact(x.aov_prev, "currency") + " · " + nf1.format(x.aov_pct) + "%")),
+      h("div", { class: "kpi" }, h("div", { class: "l" }, "Phần thay đổi do " + cl), h("div", { class: "v" }, fmtCompact(x.volume_effect, "currency"))),
+      h("div", { class: "kpi" }, h("div", { class: "l" }, "Phần thay đổi do " + vl), h("div", { class: "v" }, fmtCompact(x.value_effect, "currency")))); } },
+    { label: (S.simple ? "Các truy vấn đã chạy" : "Truy vấn đã chạy") + ` (${(v.queries || []).length})`, render: () => h("div", {}, (v.queries || []).map(q => h("details", {}, h("summary", {}, q.purpose, " · ", h("span", { class: "muted" }, fmtBytes(q.bytes) + " · " + q.rows + " dòng · " + q.ms + "ms")), codeBlock(q.sql)))) },
   ]));
   return wrap;
 }
@@ -383,8 +463,11 @@ function varianceView(r) {
 // ------------------------------------------------------------------ chat
 function appendBot(resp) {
   const msgs = $("#msgs"); if (!msgs) return;
-  msgs.append(renderAnswer(resp));
-  msgs.scrollTop = msgs.scrollHeight;
+  const card = renderAnswer(resp);
+  msgs.append(card);
+  // đưa câu hỏi và phần đầu câu trả lời lên đầu khung nhìn (câu trả lời thường cao hơn màn hình; cuộn xuống cuối sẽ che mất lời giải thích)
+  const anchor = card.previousElementSibling && card.previousElementSibling.classList.contains("msg-user") ? card.previousElementSibling : card;
+  msgs.scrollTop = Math.max(0, anchor.offsetTop - msgs.offsetTop - 12);
   if (resp.conversation_id && (!S.conv || S.conv !== resp.conversation_id)) { S.conv = resp.conversation_id; }
   loadConvs();
 }
@@ -393,10 +476,13 @@ async function sendMessage(text, clarification = null) {
   if (!text && !clarification) return;
   $(".empty", msgs) && $(".empty", msgs).remove();
   msgs.append(h("div", { class: "msg-user" }, text));
-  const steps = ["Nạp ngữ cảnh hội thoại", "Lập kế hoạch truy vấn", "Sinh SQL theo semantic layer", "Kiểm duyệt cú pháp · RBAC · RLS", "Ước lượng chi phí quét", "Chạy trên kho dữ liệu", "Diễn giải & kiểm chứng số liệu"];
+  const steps = S.simple
+    ? ["Đang đọc câu hỏi", "Đang chọn chỉ số và cách tính", "Đang viết truy vấn", "Đang kiểm tra quyền truy cập và chi phí", "Đang chạy trên kho dữ liệu", "Đang viết lời giải thích và đối chiếu số liệu"]
+    : ["Nạp ngữ cảnh hội thoại", "Lập kế hoạch truy vấn", "Sinh SQL theo semantic layer", "Kiểm duyệt cú pháp · RBAC · RLS", "Ước lượng chi phí quét", "Chạy trên kho dữ liệu", "Diễn giải & kiểm chứng số liệu"];
   const th = h("div", { class: "card msg-bot" }, h("div", { class: "thinking" }, h("div", { class: "spinner" }), h("span", { id: "think-step" }, steps[0] + "…")));
   msgs.append(th); msgs.scrollTop = msgs.scrollHeight;
-  let k = 0; const timer = setInterval(() => { k = Math.min(k + 1, steps.length - 1); const el = $("#think-step"); if (el) el.textContent = steps[k] + "…"; }, 450);
+  const pace = S.cfg.mode === "offline" ? 450 : 1300;       // có mô hình ngôn ngữ thì mỗi câu mất vài giây
+  let k = 0; const timer = setInterval(() => { k = Math.min(k + 1, steps.length - 1); const el = $("#think-step"); if (el) el.textContent = steps[k] + "…"; }, pace);
   try {
     if (!S.conv) { const c = await api("/api/conversations", { body: {} }); S.conv = c.id; }
     const resp = await api("/api/chat", { body: { message: text, conversation_id: S.conv, clarification } });
@@ -423,15 +509,50 @@ async function openConv(id) {
   msgs.scrollTop = msgs.scrollHeight;
   loadConvs();
 }
+const STARTER_ICON = { lookup: "🔎", compare: "📊", why: "🧭", define: "📖" };
+function rlsText(u) { return Object.values(u.rls || {}).map(v => [].concat(v).join(", ")).join("; "); }
+function goto(view) { S.view = view; store.set("view", view); renderNav(); renderView(); }
 function emptyState() {
-  const u = S.user;
-  return h("div", { class: "empty" }, h("h3", {}, "Hỏi dữ liệu bằng tiếng Việt"),
-    h("div", {}, "Agent lập kế hoạch truy vấn, sinh SQL đúng định nghĩa chỉ số, kiểm duyệt phân quyền & chi phí, chạy trên kho và trả về bảng + biểu đồ + diễn giải đã kiểm chứng."),
-    u.rls && Object.keys(u.rls).length ? h("div", { class: "callout info", style: { justifyContent: "center", marginTop: "10px" } }, "🔒 Tài khoản của bạn chỉ thấy dữ liệu: " + JSON.stringify(u.rls)) : null,
-    h("div", { class: "chips" }, (S.cfg.samples || []).slice(0, 8).map(s => h("button", { class: "chip", onclick: () => sendMessage(s) }, s))));
+  // màn hình chào: trợ lý là ai, làm được gì, có dữ liệu gì — lấy từ hồ sơ của doanh nghiệp đang phục vụ
+  const u = S.user, p = S.cfg.profile || {};
+  const cap = g => h("div", { class: "cap" }, h("div", { class: "cap-t" }, (STARTER_ICON[g.key] || "•") + " " + g.title), h("div", { class: "cap-h" }, g.hint),
+    g.questions.map(q => h("button", { class: "cap-q", title: "Bấm để hỏi câu này", onclick: () => sendMessage(q) }, q)));
+  return h("div", { class: "empty welcome" },
+    h("h3", {}, "Xin chào" + (u.full_name ? ", " + u.full_name : "") + " 👋"),
+    h("div", { class: "lead" }, "Mình là ", h("b", {}, p.assistant || "trợ lý dữ liệu"), p.company ? [", trả lời câu hỏi về số liệu của ", h("b", {}, p.company)] : null,
+      ". Bạn cứ hỏi bằng tiếng Việt như hỏi một đồng nghiệp. Mình trả về con số, biểu đồ và lời giải thích, kèm cách tính để bạn kiểm tra lại."),
+    u.rls && Object.keys(u.rls).length ? h("div", { class: "callout info" }, "🔒 Tài khoản này được phân quyền xem một phần dữ liệu. Mọi con số mình trả về chỉ tính trong phạm vi đó.") : null,
+    (p.starters || []).length ? h("div", { class: "cap-grid" }, p.starters.map(cap))
+      : h("div", { class: "chips" }, (S.cfg.samples || []).slice(0, 8).map(s => h("button", { class: "chip", onclick: () => sendMessage(s) }, s))),
+    h("div", { class: "welcome-foot" },
+      (p.areas || []).length ? h("div", {}, h("b", {}, "Dữ liệu hiện có: "), p.areas.join(" · "), ` (${p.n_metrics} chỉ số, ${p.n_dimensions} cách chia). `,
+        h("button", { class: "linklike", onclick: () => goto("schema") }, "Xem danh mục")) : null,
+      (p.out_of_scope || []).length ? h("div", {}, h("b", {}, "Mình không làm: "), p.out_of_scope.join("; "), ".") : null,
+      h("div", {}, h("button", { class: "linklike", onclick: showHelp }, "Xem hướng dẫn nhanh"), " · mẹo: sau mỗi câu trả lời có thể hỏi tiếp “chia theo …” hoặc “so với cùng kỳ”.")));
+}
+function showHelp() {
+  const p = (S.cfg || {}).profile || {};
+  const ex = (p.starters || []).flatMap(g => g.questions.slice(0, 1));
+  const sect = (title, ...kids) => h("div", { class: "help-sec" }, h("b", {}, title), ...kids);
+  modal("Hướng dẫn nhanh", h("div", { class: "help" },
+    sect("1. Hỏi thế nào", h("div", {}, "Viết câu hỏi bằng tiếng Việt, nêu rõ bạn muốn xem số gì, trong thời gian nào, chia theo gì. Ví dụ:"),
+      h("ul", {}, ex.map(q => h("li", {}, q)))),
+    sect("2. Đọc câu trả lời", h("ul", {},
+      h("li", {}, h("b", {}, "Mình hiểu câu hỏi là: "), "trợ lý nhắc lại chỉ số, thời gian, cách chia đã dùng. Nếu khác ý bạn, hãy hỏi lại rõ hơn."),
+      h("li", {}, h("b", {}, "Dấu ✓ màu xanh: "), "mọi con số trong lời giải thích đã được tính lại từ bảng kết quả và khớp."),
+      h("li", {}, h("b", {}, "Chỉ số này được tính thế nào: "), "định nghĩa và bộ phận chịu trách nhiệm của từng chỉ số."),
+      h("li", {}, h("b", {}, "Xem chi tiết kỹ thuật: "), "câu lệnh SQL, các bước kiểm tra quyền và chi phí, nguồn gốc dữ liệu. Dành cho người cần kiểm tra sâu."))),
+    sect("3. Khi trợ lý hỏi lại", h("div", {}, "Một số từ có nhiều cách tính (ví dụ “doanh thu”). Trợ lý hỏi lại thay vì tự đoán, và nhớ lựa chọn của bạn trong cuộc hội thoại đó.")),
+    sect("4. Khi trợ lý từ chối hoặc chờ bạn duyệt", h("div", {}, "Trợ lý chỉ đọc dữ liệu trong phạm vi tài khoản của bạn. Truy vấn quét nhiều dữ liệu sẽ dừng lại để bạn xem và bấm duyệt trước khi chạy.")),
+    sect("5. Hai chế độ hiển thị", h("div", {}, "Nút ở góc trên bên phải chuyển giữa ", h("b", {}, "Đơn giản"), " (lời thường, chi tiết kỹ thuật thu gọn) và ", h("b", {}, "Chuyên gia"), " (hiện ngay nhãn kỹ thuật và các tab SQL, kiểm duyệt, chi phí).")),
+    sect("Từ ngữ", h("ul", {},
+      h("li", {}, h("b", {}, "Chỉ số: "), "một con số có định nghĩa thống nhất, ví dụ " + ((p.metric_examples || []).slice(0, 2).join(", ").toLowerCase() || "doanh thu") + "."),
+      h("li", {}, h("b", {}, "Cách chia (chiều phân tích): "), "tiêu chí để tách con số, ví dụ theo tháng, theo khu vực."),
+      h("li", {}, h("b", {}, "Phân quyền theo dòng: "), "mỗi tài khoản chỉ thấy phần dữ liệu thuộc phạm vi của mình.")))));
 }
 function viewChat() {
-  const ta = h("textarea", { rows: 2, placeholder: "Ví dụ: Doanh thu thuần theo miền tháng 10/2026 so với cùng kỳ…", onkeydown: e => {
+  const first = ((((S.cfg.profile || {}).starters || [])[0] || {}).questions || [])[0] || (S.cfg.samples || [])[0] || "";
+  const ta = h("textarea", { rows: 2, placeholder: "Hỏi về số liệu bằng tiếng Việt" + (first ? ", ví dụ: " + first : "") + "…", onkeydown: e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); const v = ta.value.trim(); if (v) { ta.value = ""; sendMessage(v); } }
   } });
   const el = h("div", { class: "chat" },
@@ -442,14 +563,14 @@ function viewChat() {
         (S.cfg.samples || []).map(s => h("button", { class: "s", onclick: () => sendMessage(s) }, s)))),
     h("div", { class: "thread" }, h("div", { class: "msgs", id: "msgs" }, emptyState()),
       h("div", { class: "composer" }, h("div", { class: "box" }, ta, h("button", { class: "btn primary", onclick: () => { const v = ta.value.trim(); if (v) { ta.value = ""; sendMessage(v); } } }, "Gửi")),
-        h("div", { class: "muted", style: { fontSize: "12px", marginTop: "4px" } }, "Enter để gửi · Shift+Enter xuống dòng · Agent ghi nhớ ngữ cảnh: có thể hỏi tiếp “còn Miền Nam thì sao?”, “so với cùng kỳ”, “theo kênh thì sao”"))));
+        h("div", { class: "muted", style: { fontSize: "12px", marginTop: "4px" } }, "Enter để gửi · Shift+Enter xuống dòng · Trợ lý nhớ câu trước, nên có thể hỏi tiếp ngắn gọn: “chia theo …”, “so với cùng kỳ”, “còn tháng trước thì sao?”"))));
   setTimeout(() => { loadConvs(); if (S.conv) openConv(S.conv); ta.focus(); }, 0);
   return el;
 }
 
 // ------------------------------------------------------------------ SQL console
 function viewConsole() {
-  const ta = h("textarea", { rows: 12, class: "mono" }, store.get("console_sql") || "SELECT cn.ten_cn, SUM(f.thanh_tien) AS doanh_thu\nFROM dw.fct_ct_dh f\nJOIN dw.dim_cn cn ON cn.ma_cn = f.ma_cn\nWHERE YEAR(f.ngay_dh) = 2026\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 10");
+  const ta = h("textarea", { rows: 12, class: "mono" }, store.get("console_sql") || (S.cfg.profile || {}).console_example || "SELECT 1");
   const out = h("div", { style: { marginTop: "14px" } });
   const save = () => store.set("console_sql", ta.value);
   const check = async () => {
@@ -473,15 +594,15 @@ function viewConsole() {
       out.replaceChildren(h("div", { id: "msgs", style: { display: "flex", flexDirection: "column", gap: "12px" } }, renderAnswer(r)));
     } catch (e) { out.replaceChildren(h("div", { class: "callout err" }, e.message)); }
   };
-  return h("div", { class: "page" }, h("h2", {}, "SQL Console"),
-    h("p", { class: "sub" }, "Mọi SQL đều qua cùng pipeline: kiểm tra cú pháp → chỉ đọc → hàm an toàn → RBAC/RLS → dry-run → lint → ước lượng chi phí → (duyệt nếu bảng lớn) → chạy. Lỗi sẽ được agent tự sửa (thử câu mẫu có cột sai ‘thanh_tien’)."),
+  return h("div", { class: "page" }, h("h2", {}, S.simple ? "Tự viết SQL" : "SQL Console"),
+    h("p", { class: "sub" }, S.simple ? "Dành cho người biết SQL. Bạn gõ truy vấn, hệ thống kiểm tra quyền truy cập, ước lượng chi phí, tự sửa lỗi tên cột rồi mới chạy. Trang này chỉ đọc dữ liệu, không sửa hay xóa được." : "Mọi SQL đều qua cùng pipeline: kiểm tra cú pháp → chỉ đọc → hàm an toàn → RBAC/RLS → dry-run → lint → ước lượng chi phí → (duyệt nếu bảng lớn) → chạy. Lỗi tên cột, tên bảng sẽ được agent tự sửa theo catalog."),
     ta, h("div", { class: "row", style: { marginTop: "8px" } }, h("button", { class: "btn", onclick: check }, "🔍 Kiểm tra (dry-run)"), h("button", { class: "btn primary", onclick: run }, "▶ Chạy"),
-      h("span", { class: "muted", style: { fontSize: "12.5px" } }, "Thử: DROP TABLE dw.fct_dh · SELECT * FROM dw.dim_kh · SELECT * FROM read_csv('x.csv') · SUM(d.tong_tt) JOIN fct_ct_dh")), out);
+      h("span", { class: "muted", style: { fontSize: "12.5px" } }, "Thử xem hệ thống chặn thế nào: " + ((S.cfg.profile || {}).console_tries || []).join(" · "))), out);
 }
 
 // ------------------------------------------------------------------ schema & chỉ số
 function viewSchema() {
-  const page = h("div", { class: "page" }, h("h2", {}, "Schema & Semantic layer"), h("p", { class: "sub" }, "Danh mục dữ liệu (data catalog) và định nghĩa chỉ số thống nhất. Cột 🔒 bị hạn chế theo vai trò."));
+  const page = h("div", { class: "page" }, h("h2", {}, S.simple ? "Dữ liệu và chỉ số" : "Schema & Semantic layer"), h("p", { class: "sub" }, S.simple ? "Những gì bạn có thể hỏi: danh sách chỉ số (kèm cách tính và bộ phận chịu trách nhiệm), các cách chia, và các bảng dữ liệu phía sau. Cột có dấu 🔒 bị ẩn với tài khoản của bạn." : "Danh mục dữ liệu (data catalog) và định nghĩa chỉ số thống nhất. Cột 🔒 bị hạn chế theo vai trò."));
   const q = h("input", { type: "text", placeholder: "Lọc bảng/cột/chỉ số…", style: { width: "320px" } });
   page.append(q);
   const content = h("div", { style: { marginTop: "12px" } });
@@ -518,7 +639,7 @@ function editCatalog(key, desc, syn) {
 
 // ------------------------------------------------------------------ nhật ký
 function viewLogs() {
-  const page = h("div", { class: "page" }, h("h2", {}, "Nhật ký truy vấn"), h("p", { class: "sub" }, S.user.role === "admin" ? "Toàn bộ truy vấn của mọi người dùng (audit log)." : "Truy vấn của bạn."));
+  const page = h("div", { class: "page" }, h("h2", {}, S.simple ? "Lịch sử câu hỏi" : "Nhật ký truy vấn"), h("p", { class: "sub" }, S.simple ? (S.user.role === "admin" ? "Mọi câu hỏi và truy vấn của tất cả người dùng, kèm trạng thái, thời gian và chi phí. Tải về được dưới dạng CSV." : "Các câu bạn đã hỏi và truy vấn đã chạy, kèm trạng thái và thời gian.") : (S.user.role === "admin" ? "Toàn bộ truy vấn của mọi người dùng (audit log)." : "Truy vấn của bạn.")));
   const box = h("div", {}); page.append(box);
   api("/api/logs").then(d => {
     const st = d.stats;
@@ -541,8 +662,8 @@ function viewLogs() {
 
 // ------------------------------------------------------------------ chất lượng dữ liệu
 function viewDQ() {
-  const page = h("div", { class: "page" }, h("h2", {}, "Chất lượng & trôi lệch dữ liệu"),
-    h("p", { class: "sub" }, "Kiểm định xác định (thống kê + quy tắc) trên kho: schema drift theo data contract, mã chưa chuẩn hóa, trùng lặp, khóa mồ côi, trôi lệch đơn vị (KS test, change-point), outlier, bất thường sản lượng, PSI/chi-square. Quy tắc sửa được kiểm duyệt AST rồi build lại model."));
+  const page = h("div", { class: "page" }, h("h2", {}, S.simple ? "Chất lượng dữ liệu" : "Chất lượng & trôi lệch dữ liệu"),
+    h("p", { class: "sub" }, S.simple ? "Hệ thống tự kiểm tra dữ liệu và liệt kê các vấn đề tìm thấy, ví dụ dữ liệu nạp thiếu, số liệu lệch bất thường, bản ghi trùng. Vấn đề chưa xử lý sẽ được nhắc ngay trong câu trả lời có liên quan." : "Kiểm định xác định (thống kê + quy tắc) trên kho: schema drift theo data contract, mã chưa chuẩn hóa, trùng lặp, khóa mồ côi, trôi lệch đơn vị (KS test, change-point), outlier, bất thường sản lượng, PSI/chi-square. Quy tắc sửa được kiểm duyệt AST rồi build lại model."));
   const box = h("div", {}); page.append(box);
   const draw = rep => {
     box.replaceChildren(...[
@@ -595,7 +716,7 @@ function confirmFix(f, redraw) {
 
 // ------------------------------------------------------------------ lineage
 function viewLineage() {
-  const page = h("div", { class: "page" }, h("h2", {}, "Lineage dữ liệu"), h("p", { class: "sub" }, "Dòng chảy dữ liệu raw/ref → staging → dw, tính bằng phân tích AST (sqlglot) trên SQL của các model. Chọn một bảng để xem cột; chọn cột để truy ngược tới cột nguồn."));
+  const page = h("div", { class: "page" }, h("h2", {}, S.simple ? "Nguồn gốc dữ liệu" : "Lineage dữ liệu"), h("p", { class: "sub" }, S.simple ? "Mỗi bảng và mỗi cột được tạo ra từ nguồn nào. Chọn một bảng để xem cột; chọn một cột để lần ngược về dữ liệu gốc." : "Dòng chảy dữ liệu raw/ref → staging → dw, tính bằng phân tích AST (sqlglot) trên SQL của các model. Chọn một bảng để xem cột; chọn cột để truy ngược tới cột nguồn."));
   const wrap = h("div", {});
   const canvas = h("div", { class: "lineage", style: { height: "560px" } });
   const side = h("div", { class: "card", style: { marginTop: "14px" } }, h("div", { class: "hd" }, h("b", {}, "Chi tiết")), h("div", { class: "bd", id: "lin-side" }, h("div", { class: "muted" }, "Chọn một bảng ở sơ đồ.")));
@@ -603,7 +724,15 @@ function viewLineage() {
   page.append(wrap);
   api("/api/lineage").then(data => {
     const g = data.graph;
-    const layers = { raw: 0, ref: 0, stg: 1, dw: 2 };
+    const serving = (S.cfg.profile || {}).schema || "dw";
+    if (!g.nodes.length) {       // doanh nghiệp nhận một kho đã dựng sẵn: không có các bước biến đổi để vẽ
+      wrap.replaceChildren(h("div", { class: "callout info" }, h("span", {}, "ℹ️"), h("div", {}, h("b", {}, "Doanh nghiệp này chưa khai báo các bước biến đổi dữ liệu, nên chưa có sơ đồ nguồn gốc. "),
+        "Hệ thống đang đọc thẳng các bảng đã dựng sẵn trong kho ", h("code", {}, serving), ". Xem danh sách bảng và cột ở trang ",
+        h("button", { class: "linklike", onclick: () => goto("schema") }, S.simple ? "Dữ liệu và chỉ số" : "Schema & chỉ số"), ".")));
+      return;
+    }
+    const layers = { raw: 0, ref: 0, stg: 1, staging: 1 };
+    layers[serving] = 2;
     const cols = [[], [], []];
     g.nodes.forEach(n => cols[layers[n.layer] ?? 0].push(n));
     cols.forEach(c => c.sort((a, b) => a.id.localeCompare(b.id)));
@@ -625,7 +754,8 @@ function viewLineage() {
     });
     const inner = h("div", { style: { position: "relative", width: width + "px", height: height + "px" } });
     inner.append(svg);
-    ["Raw / Ref (nguồn)", "Staging (làm sạch)", "DW (mart)"].forEach((t, i) => inner.append(h("div", { class: "lin-head", style: { left: X0 + i * (W + 70) + "px" } }, t)));
+    (S.simple ? ["Dữ liệu gốc", "Đã làm sạch", "Kho để phân tích (" + serving + ")"] : ["Raw / Ref (nguồn)", "Staging (làm sạch)", serving.toUpperCase() + " (mart)"])
+      .forEach((t, i) => inner.append(h("div", { class: "lin-head", style: { left: X0 + i * (W + 70) + "px" } }, t)));
     const nodes = {};
     g.nodes.forEach(n => {
       const el = h("div", { class: "lin-node", style: { left: pos[n.id].x + "px", top: pos[n.id].y + "px" }, title: n.desc || n.id, onclick: () => select(n.id) }, n.id, n.rows != null ? h("span", { class: "muted" }, " · " + nf0.format(n.rows)) : null);
@@ -651,15 +781,18 @@ function viewLineage() {
       modal("Truy ngược cột " + col, h("div", {}, h("div", {}, h("b", {}, "Cột nguồn gốc (raw): "), r.raw_sources.join(", ") || "—"), h("ul", { style: { marginTop: "8px" } }, tree(r.upstream)),
         r.downstream.length ? h("div", {}, h("b", {}, "Được dùng bởi: "), r.downstream.join(", ")) : null));
     }
-    select("dw.fct_ct_dh");
+    // mở sẵn bảng có nhiều nguồn đổ về nhất ở tầng phân tích (thường là bảng sự kiện chính)
+    const fanIn = id => g.edges.filter(e => e.to === id).length;
+    const start = [...cols[2]].sort((a, b) => fanIn(b.id) - fanIn(a.id))[0] || g.nodes[0];
+    select(start.id);
   }).catch(e => page.append(h("div", { class: "callout err" }, e.message)));
   return page;
 }
 
 // ------------------------------------------------------------------ eval
 function viewEval() {
-  const page = h("div", { class: "page" }, h("h2", {}, "Đánh giá độ chính xác (Execution Accuracy)"),
-    h("p", { class: "sub" }, "Bộ câu hỏi mẫu kiểu Spider/BIRD (eval/questions.json) với SQL chuẩn. So khớp kết quả thực thi theo chuẩn Spider 2.0 (mọi cột gold phải có trong kết quả dự đoán). Tối ưu few-shot: học từ lỗi trên train, đo trên dev."));
+  const page = h("div", { class: "page" }, h("h2", {}, S.simple ? "Đo độ chính xác" : "Đánh giá độ chính xác (Execution Accuracy)"),
+    h("p", { class: "sub" }, S.simple ? "Chạy một bộ câu hỏi đã có đáp án chuẩn để biết trợ lý trả lời đúng bao nhiêu phần trăm. Một câu được tính là đúng khi bảng kết quả trùng với bảng của đáp án." : "Bộ câu hỏi mẫu kiểu Spider/BIRD (eval/questions.json) với SQL chuẩn. So khớp kết quả thực thi theo chuẩn Spider 2.0 (mọi cột gold phải có trong kết quả dự đoán). Tối ưu few-shot: học từ lỗi trên train, đo trên dev."));
   const split = h("select", {}, ["all", "train", "dev"].map(s => h("option", { value: s }, s)));
   const mode = h("select", {}, h("option", { value: "" }, "theo cài đặt"), h("option", { value: "offline" }, "offline"), h("option", { value: "claude" }, "claude"), h("option", { value: "openrouter" }, "openrouter"));
   const out = h("div", { style: { marginTop: "12px" } });
@@ -719,7 +852,7 @@ function viewEval() {
 
 // ------------------------------------------------------------------ cài đặt
 function viewSettings() {
-  const page = h("div", { class: "page" }, h("h2", {}, "Cài đặt hệ thống"), h("p", { class: "sub" }, "Chế độ LLM, ngưỡng HITL, tự sửa lỗi, tái sử dụng few-shot."));
+  const page = h("div", { class: "page" }, h("h2", {}, S.simple ? "Cài đặt" : "Cài đặt hệ thống"), h("p", { class: "sub" }, S.simple ? "Chọn cách trợ lý hiểu câu hỏi (bộ luật có sẵn hoặc mô hình ngôn ngữ), ngưỡng phải duyệt trước khi chạy và số lần tự sửa lỗi." : "Chế độ LLM, ngưỡng HITL, tự sửa lỗi, tái sử dụng few-shot."));
   api("/api/admin/settings").then(d => {
     const s = d.settings;
     const f = {
@@ -748,16 +881,18 @@ function viewSettings() {
 }
 
 // ------------------------------------------------------------------ khung ứng dụng
+// label: tên ở chế độ Chuyên gia · plain: tên bằng lời thường ở chế độ Đơn giản · tip: trang này để làm gì
 const VIEWS = [
-  { id: "chat", label: "💬 Hỏi đáp dữ liệu", fn: viewChat },
-  { id: "console", label: "⌨️ SQL Console", fn: viewConsole },
-  { id: "schema", label: "📚 Schema & chỉ số", fn: viewSchema },
-  { id: "logs", label: "🧾 Nhật ký truy vấn", fn: viewLogs },
-  { id: "dq", label: "🩺 Chất lượng dữ liệu", fn: viewDQ, admin: true },
-  { id: "lineage", label: "🔀 Lineage", fn: viewLineage, admin: true },
-  { id: "eval", label: "🎯 Đánh giá (Eval)", fn: viewEval, admin: true },
-  { id: "settings", label: "⚙️ Cài đặt", fn: viewSettings, admin: true },
+  { id: "chat", label: "💬 Hỏi đáp dữ liệu", plain: "💬 Hỏi dữ liệu", tip: "Hỏi số liệu bằng tiếng Việt và nhận bảng, biểu đồ, lời giải thích", fn: viewChat },
+  { id: "console", label: "⌨️ SQL Console", plain: "⌨️ Tự viết SQL", tip: "Dành cho người biết SQL: tự viết truy vấn, hệ thống vẫn kiểm tra quyền và chi phí", fn: viewConsole },
+  { id: "schema", label: "📚 Schema & chỉ số", plain: "📚 Dữ liệu và chỉ số", tip: "Danh mục chỉ số, cách chia và các bảng dữ liệu hiện có", fn: viewSchema },
+  { id: "logs", label: "🧾 Nhật ký truy vấn", plain: "🧾 Lịch sử câu hỏi", tip: "Các câu đã hỏi, truy vấn đã chạy và kết quả", fn: viewLogs },
+  { id: "dq", label: "🩺 Chất lượng dữ liệu", plain: "🩺 Chất lượng dữ liệu", tip: "Các vấn đề của dữ liệu được phát hiện tự động và cách xử lý", fn: viewDQ, admin: true },
+  { id: "lineage", label: "🔀 Lineage", plain: "🔀 Nguồn gốc dữ liệu", tip: "Mỗi bảng, mỗi cột được tạo ra từ nguồn nào", fn: viewLineage, admin: true },
+  { id: "eval", label: "🎯 Đánh giá (Eval)", plain: "🎯 Đo độ chính xác", tip: "Chạy bộ câu hỏi kiểm tra để biết trợ lý trả lời đúng bao nhiêu", fn: viewEval, admin: true },
+  { id: "settings", label: "⚙️ Cài đặt", plain: "⚙️ Cài đặt", tip: "Chế độ trả lời, mô hình ngôn ngữ, ngưỡng duyệt", fn: viewSettings, admin: true },
 ];
+function setSimple(on) { S.simple = on; store.set("ui_mode", on ? "simple" : "expert"); renderNav(); renderView(); }
 function renderTop() {
   const t = $("#topbar"); if (!t) return;
   const u = S.user, c = S.cfg;
@@ -765,9 +900,18 @@ function renderTop() {
   t.replaceChildren(
     h("div", { class: "brand" }, "📊 " + ((c.profile || {}).assistant || "DATA-01"), h("small", { class: "hide-sm" }, (c.profile || {}).company || "AI Agent Text-to-SQL · Self-Service Analytics")),
     h("span", { class: "spacer" }),
-    h("span", { class: "badge " + (c.mode === "offline" ? "info" : "ok"), title: "Chế độ sinh kế hoạch truy vấn" }, c.mode === "claude" ? "🤖 Claude · " + c.model : c.mode === "openrouter" ? "🤖 OpenRouter · " + c.model : "⚙️ Offline NLU (chưa có API key)"),
-    h("span", { class: "badge hide-sm" }, "Dữ liệu đến " + c.anchor),
-    h("span", { class: "badge", title: u.full_name }, "👤 " + u.username + " · " + (u.role === "admin" ? "Admin" : "Analyst") + (u.rls && Object.keys(u.rls).length ? " · RLS " + JSON.stringify(u.rls) : "")),
+    S.simple
+      ? h("span", { class: "badge hide-sm " + (c.mode === "offline" ? "info" : "ok"), title: c.mode === "offline" ? "Chưa bật mô hình ngôn ngữ: trợ lý trả lời bằng bộ luật có sẵn, hiểu được các câu hỏi về chỉ số đã định nghĩa." : "Trợ lý dùng mô hình ngôn ngữ " + c.model + " để hiểu câu hỏi; mọi truy vấn vẫn được kiểm tra bằng code." },
+          c.mode === "offline" ? "⚙️ Trả lời bằng bộ luật" : "🤖 Có mô hình ngôn ngữ")
+      : h("span", { class: "badge " + (c.mode === "offline" ? "info" : "ok"), title: "Chế độ sinh kế hoạch truy vấn" }, c.mode === "claude" ? "🤖 Claude · " + c.model : c.mode === "openrouter" ? "🤖 OpenRouter · " + c.model : "⚙️ Offline NLU (chưa có API key)"),
+    h("span", { class: "badge hide-sm", title: "Ngày mới nhất có dữ liệu trong kho" }, "Dữ liệu đến " + c.anchor),
+    S.simple
+      ? h("span", { class: "badge hide-sm", title: u.username + " · " + (u.role_label || u.role) + (u.rls && Object.keys(u.rls).length ? " · chỉ xem được một phần dữ liệu (" + rlsText(u) + ")" : "") }, "👤 " + (u.full_name || u.username) + (u.rls && Object.keys(u.rls).length ? " 🔒" : ""))
+      : h("span", { class: "badge", title: u.full_name }, "👤 " + u.username + " · " + (u.role === "admin" ? "Admin" : "Analyst") + (u.rls && Object.keys(u.rls).length ? " · RLS " + JSON.stringify(u.rls) : "")),
+    h("div", { class: "seg", title: "Đơn giản: lời thường, chi tiết kỹ thuật thu gọn. Chuyên gia: hiện ngay nhãn kỹ thuật và các tab SQL, kiểm duyệt, chi phí." },
+      h("button", { class: S.simple ? "on" : "", onclick: () => setSimple(true) }, "Đơn giản"),
+      h("button", { class: S.simple ? "" : "on", onclick: () => setSimple(false) }, "Chuyên gia")),
+    h("button", { class: "btn sm", title: "Hướng dẫn nhanh", onclick: showHelp }, "❓"),
     h("button", { class: "btn sm", title: "Đổi giao diện sáng/tối", onclick: () => {
       const cur = document.documentElement.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       const nx = cur === "dark" ? "light" : "dark"; document.documentElement.setAttribute("data-theme", nx); store.set("theme", nx); renderView();
@@ -779,7 +923,7 @@ function renderNav() {
   n.replaceChildren(...VIEWS.flatMap((v, i) => {
     if (v.admin && !S.user.can_manage_schema) return [];
     const sect = v.admin && !VIEWS.slice(0, i).some(x => x.admin) ? h("div", { class: "sect" }, "Quản trị (Admin)") : null;
-    return [sect, h("button", { class: S.view === v.id ? "active" : "", onclick: () => { S.view = v.id; store.set("view", v.id); renderNav(); renderView(); } }, v.label)];
+    return [sect, h("button", { class: S.view === v.id ? "active" : "", title: v.tip, onclick: () => { S.view = v.id; store.set("view", v.id); renderNav(); renderView(); } }, S.simple ? v.plain : v.label)];
   }).filter(Boolean));
 }
 function renderView() {
@@ -791,6 +935,7 @@ function renderView() {
 }
 async function boot() {
   const th = store.get("theme"); if (th) document.documentElement.setAttribute("data-theme", th);
+  S.simple = store.get("ui_mode") !== "expert";       // mặc định: chế độ Đơn giản cho người mới
   S.token = store.get("token");
   if (!S.token) return renderLogin();
   try { S.user = await api("/api/me"); S.cfg = await api("/api/config"); } catch (e) { return renderLogin(); }
@@ -819,6 +964,6 @@ async function renderLogin() {
       (pub.industry ? " (" + pub.industry + ")" : "") + "." + ((pub.demo_users || []).length ? " Dữ liệu giả lập, đăng nhập bằng tài khoản demo:" : "")),
     h("div", { style: { marginTop: "14px" } }, u, p, h("button", { class: "btn primary", style: { width: "100%", marginTop: "10px" }, onclick: () => go(u.value, p.value) }, "Đăng nhập")), err,
     h("div", { class: "quick" }, (pub.demo_users || []).map(x =>
-      q(x.username, x.password, x.full_name, x.role_label + (x.rls ? " · chỉ thấy " + x.rls : ""))))))));
+      q(x.username, x.password, x.full_name, x.role_label + (x.rls ? " · chỉ thấy một phần dữ liệu" : ""))))))));
 }
 boot();
