@@ -120,6 +120,22 @@ def test_retries_transient_errors_then_succeeds(client, monkeypatch):
     assert len(http.requests) == 3
 
 
+def test_rate_limit_is_waited_out_instead_of_failing(client, monkeypatch):
+    """Tài khoản bị giới hạn số lượt gọi mỗi phút: client chờ rồi gọi lại, không bỏ cuộc sau vài giây."""
+    http = FakeHTTP([_http_error(429)] * 4 + [_msg(content="ok")])
+    monkeypatch.setattr(llm.urllib.request, "urlopen", http)
+    assert client._create([{"role": "user", "content": "x"}])["content"] == "ok"
+    assert len(http.requests) == 5
+
+
+def test_rate_limit_wait_follows_provider_headers():
+    assert llm._rate_limit_wait({"Retry-After": "7"}, 0) == 7.0
+    assert llm._rate_limit_wait({"Retry-After": "600"}, 0) == 30.0            # không chờ quá 30 giây mỗi lần
+    reset_ms = (llm.time.time() + 12) * 1000
+    assert 11 <= llm._rate_limit_wait({"X-RateLimit-Reset": str(reset_ms)}, 0) <= 13
+    assert llm._rate_limit_wait({}, 2) == 15.0 and llm._rate_limit_wait(None, 0) == 5.0
+
+
 def test_narrate_rejects_invented_numbers_and_unknown_placeholders(client, monkeypatch):
     facts = {"dt": {"text": "12,5 tỷ"}}
     replies = [_msg(content='{"text": "Doanh thu đạt {dt}."}'), _msg(content='{"text": "Doanh thu đạt 12 tỷ."}'),

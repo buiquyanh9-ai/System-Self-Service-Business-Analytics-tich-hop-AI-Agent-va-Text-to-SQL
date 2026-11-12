@@ -415,6 +415,19 @@ class Claude:
         return text
 
 
+def _rate_limit_wait(headers, attempt: int) -> float:
+    """Số giây nên chờ sau lỗi 429: theo Retry-After hoặc X-RateLimit-Reset (mốc thời gian, mili giây) nếu có, không thì
+    tăng dần 5, 10, 15, 20 giây. Không chờ quá 30 giây mỗi lần để người dùng không phải đợi vô hạn."""
+    try:
+        if headers and headers.get("Retry-After"):
+            return min(30.0, max(1.0, float(headers["Retry-After"])))
+        if headers and headers.get("X-RateLimit-Reset"):
+            return min(30.0, max(1.0, float(headers["X-RateLimit-Reset"]) / 1000.0 - time.time() + 0.5))
+    except (TypeError, ValueError):
+        pass
+    return 5.0 * (attempt + 1)
+
+
 class OpenRouter:
     """Cùng giao diện với Claude (plan / repair_sql / narrate) nhưng gọi API tương thích OpenAI của OpenRouter.
 
@@ -441,7 +454,7 @@ class OpenRouter:
         req = urllib.request.Request(self.base_url + "/chat/completions", data=json.dumps(body).encode("utf-8"),
                                      headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
         data = None
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 with urllib.request.urlopen(req, timeout=120) as r:
                     data = json.loads(r.read().decode("utf-8"))
@@ -452,7 +465,11 @@ class OpenRouter:
                     raise LLMUnavailable(f"Xác thực OpenRouter thất bại ({e.code}): {detail}")
                 if e.code == 402:
                     raise LLMUnavailable(f"Tài khoản OpenRouter không đủ số dư: {detail}")
-                if e.code in (408, 429, 500, 502, 503, 504) and attempt < 2:
+                if e.code == 429 and attempt < 4:
+                    # vượt giới hạn số lượt gọi mỗi phút (tài khoản mới: 20 lượt/phút): chờ đúng thời gian nhà cung cấp báo
+                    time.sleep(_rate_limit_wait(e.headers, attempt))
+                    continue
+                if e.code in (408, 500, 502, 503, 504) and attempt < 2:
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 raise LLMError(f"Lỗi API OpenRouter ({e.code}): {detail}")
