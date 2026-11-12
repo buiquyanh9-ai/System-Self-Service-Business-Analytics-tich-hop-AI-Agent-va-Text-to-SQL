@@ -62,6 +62,8 @@ Chi phí tham khảo: lượt đo 67 câu ngày 12/11/2026 tốn khoảng 0,02 U
 | `ANTHROPIC_API_KEY`, `LLM_MODEL`, `LLM_EFFORT` | trống, `claude-opus-5-5`, `medium` | Gọi Claude |
 | `APP_SECRET` | giá trị dùng cho phát triển | Khóa ký phiên đăng nhập. **Phải đổi khi đưa lên mạng** |
 | `SUPABASE_JWT_SECRET` | trống | Chấp nhận đăng nhập bằng Supabase Auth |
+| `PASSWORD_<TÊN>` (ví dụ `PASSWORD_ADMIN`) | trống | Mật khẩu thật của một tài khoản, thay mật khẩu mẫu trong `policies.yml`. Tài khoản đó không hiện trên màn hình đăng nhập |
+| `DEMO_LOGIN` | theo `policies.yml` | `0` để không hiện nút tài khoản dùng thử |
 
 ## 5. Chạy doanh nghiệp thứ hai
 

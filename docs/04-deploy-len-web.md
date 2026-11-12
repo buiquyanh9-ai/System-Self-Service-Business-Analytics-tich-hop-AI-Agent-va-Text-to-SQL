@@ -1,11 +1,9 @@
 # 04 · Deploy lên web (nâng cao)
 
-> **Trạng thái: chưa chạy thử.** `Dockerfile` và `render.yaml` có sẵn trong repo, nhưng trong đợt kiểm tra ngày
-> 13/11/2026 chưa build image và chưa deploy lên dịch vụ nào (máy kiểm tra không có Docker). Coi tài liệu này là kế
-> hoạch làm việc; lần deploy đầu tiên có thể phải chỉnh. Giá và giới hạn của các dịch vụ thay đổi thường xuyên, hãy
-> xem lại trang giá của họ trước khi chọn.
+Chưa cần deploy để dùng hay để demo: chạy trên máy cá nhân theo [tài liệu 03](03-chay-local.md) là đủ. Tài liệu này
+dành cho lúc cần một địa chỉ web để người khác vào dùng thử.
 
-Chưa cần deploy để dùng hay để demo: chạy trên máy cá nhân theo [tài liệu 03](03-chay-local.md) là đủ.
+Giá và giới hạn của các dịch vụ thay đổi thường xuyên; xem lại trang giá của họ trước khi chọn.
 
 ## 1. Deploy gồm những gì
 
@@ -15,63 +13,72 @@ Người dùng ──HTTPS──► Dịch vụ chạy container ──► 1 con
                                                         └──► OpenRouter / Claude (nếu đặt khóa API)
 ```
 
-Chỉ có một container, không cần cơ sở dữ liệu ngoài. Dữ liệu giả được sinh ngay lúc build image (`DATA_SCALE=0.5`,
-nhỏ bằng nửa bản chạy trên máy).
+Chỉ có một container, không cần cơ sở dữ liệu ngoài. Image chứa sẵn dữ liệu giả của **cả hai** doanh nghiệp mẫu
+(`DATA_SCALE=0.5`, nhỏ bằng nửa bản chạy trên máy). Mỗi container phục vụ một doanh nghiệp, chọn bằng biến `WORKSPACE`.
 
-## 2. Việc phải làm trước khi đưa lên mạng
+## 2. Bảo mật cho bản công khai
 
-Bản trong repo cấu hình cho việc dùng thử trên máy cá nhân. Đưa lên mạng công khai mà không sửa thì **ai cũng đăng
-nhập được bằng quyền admin**.
+Repo công khai chứa mật khẩu mẫu (`admin123`…), nên bản đưa lên mạng phải thay bằng biến môi trường:
 
-| # | Việc | Vì sao | Sửa ở đâu |
-|---|---|---|---|
-| 1 | Đặt `APP_SECRET` là chuỗi ngẫu nhiên dài | Khóa ký phiên đăng nhập; giá trị mặc định đoán được | Biến môi trường (Render tự sinh qua `render.yaml`) |
-| 2 | Đặt `demo_login: false` | Nếu để `true`, màn hình đăng nhập và `/api/public` liệt kê cả tên lẫn mật khẩu | `config/policies.yml` |
-| 3 | Đổi mật khẩu các tài khoản | Mật khẩu mẫu (`admin123`…) nằm công khai trên GitHub | `config/policies.yml` |
-| 4 | Đặt khóa API bằng biến môi trường bí mật của dịch vụ | Không đưa `.env` vào image (`.dockerignore` đã loại) hay vào git | Trang cấu hình của dịch vụ |
-| 5 | Đặt hạn mức chi tiêu cho khóa API | Trang công khai có thể bị gọi nhiều | Trang của OpenRouter hoặc Anthropic |
-| 6 | Cân nhắc ai được vào trang quản trị | Admin đổi được cài đặt, áp dụng quy tắc sửa dữ liệu, chạy lượt đo tốn tiền API | Chỉ phát tài khoản analyst cho người xem |
+| Biến | Tác dụng | Bắt buộc |
+|---|---|---|
+| `APP_SECRET` | Khóa ký phiên đăng nhập. Chuỗi ngẫu nhiên dài | Có |
+| `PASSWORD_ADMIN` | Mật khẩu thật của tài khoản `admin`. Khi đặt, mật khẩu mẫu **không dùng được nữa** và tài khoản admin **không hiện** trên màn hình đăng nhập | Có |
+| `PASSWORD_<TÊN>` | Tương tự cho tài khoản bất kỳ, ví dụ `PASSWORD_ANALYST` | Tùy |
+| `DEMO_LOGIN` | `0`: không hiện nút tài khoản dùng thử nào. Không đặt: hiện các tài khoản còn dùng mật khẩu mẫu | Tùy |
+| `OPENROUTER_API_KEY` | Bật mô hình ngôn ngữ. Đặt ở phần biến bí mật của dịch vụ, không đưa vào git | Tùy |
 
-Lưu ý: mật khẩu hiện lưu dạng chữ thường trong `policies.yml`. Chấp nhận được cho bản demo với dữ liệu giả; với dữ
-liệu thật nên dùng Supabase Auth (`SUPABASE_JWT_SECRET`) hoặc đặt hệ thống sau một lớp đăng nhập khác.
+`render.yaml` trong repo đã khai báo sẵn: `APP_SECRET` và `PASSWORD_ADMIN` do Render tự sinh. Các tài khoản analyst
+vẫn hiện làm nút dùng thử; chúng chỉ đọc dữ liệu giả lập.
 
-Nếu muốn giữ nút tài khoản dùng thử cho bản demo công khai, phương án an toàn hơn là chỉ để lại các tài khoản analyst
-trong `policies.yml` của bản deploy và giữ `demo_login: true`.
+Việc cần tự làm:
 
-## 3. Thử image trên máy trước (nên làm)
+1. **Đặt hạn mức chi tiêu cho khóa API** trên trang OpenRouter. Ai vào trang cũng hỏi được, mỗi câu hỏi tốn tiền.
+   Không muốn tốn thì không đặt khóa: hệ thống chạy bằng bộ luật có sẵn.
+2. Không phát mật khẩu admin rộng rãi. Admin đổi được cài đặt, áp dụng quy tắc sửa dữ liệu và chạy lượt đo tốn tiền API.
+3. Với dữ liệu thật, không dùng tài khoản trong `policies.yml` (mật khẩu lưu dạng chữ thường); dùng Supabase Auth
+   (`SUPABASE_JWT_SECRET`) hoặc đặt hệ thống sau một lớp đăng nhập khác.
 
-Cần Docker Desktop.
+## 3. Image đã được kiểm chứng thế nào
+
+Mỗi lần đẩy mã lên GitHub, workflow [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) tự chạy:
+
+1. Bộ kiểm thử tự động.
+2. `docker build`, rồi khởi động hai container (ABC và XYZ) với `PASSWORD_ADMIN` đặt riêng, và kiểm tra: `/api/health`
+   trả lời; tài khoản admin không lộ trên màn hình đăng nhập; mật khẩu admin mẫu bị từ chối; đăng nhập analyst hỏi
+   một câu nhận được bảng kết quả qua kiểm chứng số liệu.
+
+Xem kết quả ở tab **Actions** của repo. Dấu xanh nghĩa là image build được và chạy đúng trên máy của GitHub.
+
+Thử trên máy mình (cần Docker Desktop):
 
 ```powershell
 docker build -t data01 .
-docker run --rm -p 8000:8000 -e APP_SECRET=mot-chuoi-ngau-nhien-dai --env-file .env data01
+docker run --rm -p 8000:8000 -e APP_SECRET=mot-chuoi-ngau-nhien-dai -e PASSWORD_ADMIN=mat-khau-cua-ban --env-file .env data01
 ```
-
-Mở <http://127.0.0.1:8000> và kiểm tra `http://127.0.0.1:8000/api/health` trả `"ok": true`. Bước build mất vài phút
-vì phải cài thư viện và sinh dữ liệu.
 
 ## 4. Deploy lên Render
 
-`render.yaml` mô tả sẵn một dịch vụ web chạy bằng Docker, có kiểm tra sức khỏe ở `/api/health`.
+1. Vào <https://dashboard.render.com>, đăng nhập bằng tài khoản GitHub và cho Render quyền đọc repo (repo để private
+   vẫn được).
+2. **New → Blueprint**, chọn repo. Render đọc `render.yaml` và hiện hai dịch vụ: `data01-dienmay-abc` và
+   `data01-giaovan-xyz`.
+3. Render hỏi giá trị các biến đánh dấu bí mật:
 
-1. Đẩy mã lên GitHub (sau khi làm mục 2).
-2. Trên Render: **New → Blueprint**, chọn repo. Render đọc `render.yaml`.
-3. Điền các biến được hỏi:
-
-   | Biến | Giá trị |
+   | Biến | Điền gì |
    |---|---|
-   | `APP_SECRET` | Render tự sinh |
-   | `OPENROUTER_API_KEY` | Khóa của bạn; để trống thì chạy bộ luật offline |
-   | `OPENROUTER_MODEL` | `openai/gpt-6-luna` (đã đặt sẵn) |
-   | `ANTHROPIC_API_KEY` | Để trống nếu dùng OpenRouter |
-   | `LLM_MODE` | `auto` (đã đặt sẵn) |
-   | `SUPABASE_JWT_SECRET` | Để trống nếu không dùng Supabase |
+   | `OPENROUTER_API_KEY` | Khóa của bạn, hoặc để trống để chạy bộ luật có sẵn |
+   | `ANTHROPIC_API_KEY`, `SUPABASE_JWT_SECRET` | Để trống |
 
-4. Chờ build xong, mở địa chỉ Render cấp, kiểm tra `/api/health`.
+4. Bấm **Apply**. Lần build đầu mất khoảng 5–10 phút.
+5. Mở địa chỉ `https://<tên-dịch-vụ>.onrender.com`. Mật khẩu admin: Dashboard → dịch vụ → **Environment** →
+   `PASSWORD_ADMIN`.
 
-`render.yaml` đang ghi `plan: starter`, là gói **trả tiền**. Muốn dùng gói miễn phí thì đổi thành `plan: free`. Gói
-miễn phí có ít bộ nhớ và tự ngủ khi không ai truy cập; chưa kiểm tra hệ thống có đủ bộ nhớ trên gói này không. Nếu
-thiếu, giảm `DATA_SCALE` trong `Dockerfile`.
+Sau này mỗi lần đẩy mã lên nhánh `main`, Render tự build và deploy lại.
+
+`render.yaml` dùng `plan: free`. Gói miễn phí tự ngủ khi không ai truy cập (lần mở đầu tiên sau đó phải chờ khoảng
+một phút) và có ít bộ nhớ. Nếu dịch vụ bị khởi động lại vì thiếu bộ nhớ: giảm `DATA_SCALE` trong `Dockerfile` xuống
+`0.25`, hoặc đổi sang gói trả tiền. Bước CI ở mục 3 in ra bộ nhớ container đã dùng để tham khảo.
 
 ## 5. Lựa chọn khác
 
@@ -79,34 +86,25 @@ Mọi dịch vụ chạy được Dockerfile đều dùng được. Container l�
 
 | Dịch vụ | Cách làm | Lưu ý |
 |---|---|---|
-| Railway, Fly.io | Trỏ vào repo, dùng chung `Dockerfile`, đặt các biến ở mục 4 | Chưa thử |
-| Hugging Face Spaces (loại Docker) | Tạo Space kiểu Docker, đặt biến `PORT=7860` hoặc khai `app_port` | Chưa thử; cần thêm phần khai báo ở đầu README của Space |
+| Railway, Fly.io | Trỏ vào repo, dùng chung `Dockerfile`, đặt các biến ở mục 2 | Chưa thử |
+| Hugging Face Spaces (loại Docker) | Tạo Space kiểu Docker, đặt biến `PORT=7860` | Chưa thử; cần thêm phần khai báo ở đầu README của Space |
 | Máy chủ riêng (VPS) | `docker run` như mục 3, đặt sau Nginx hoặc Caddy để có HTTPS | Tự lo cập nhật và sao lưu |
-| Chỉ demo tạm thời | Chạy trên máy cá nhân rồi mở đường hầm (Cloudflare Tunnel, ngrok) | Máy phải bật suốt buổi demo; vẫn phải làm mục 2 |
+| Chỉ demo tạm thời | Chạy trên máy cá nhân rồi mở đường hầm (Cloudflare Tunnel, ngrok) | Máy phải bật suốt buổi demo; vẫn phải đặt các biến ở mục 2 |
 
 ## 6. Giới hạn của bản deploy hiện tại
 
 | Giới hạn | Hệ quả | Hướng xử lý |
 |---|---|---|
-| Dữ liệu chạy nằm trong container (`var/`) | Hội thoại, nhật ký, cài đặt và ví dụ đã học **mất** mỗi lần deploy lại hoặc container khởi động lại | Gắn ổ đĩa bền vào `/app/var`, hoặc chấp nhận với bản demo |
-| `Dockerfile` chỉ dựng doanh nghiệp ABC | Đặt `WORKSPACE=giaovan_xyz` sẽ không có dữ liệu | Thêm bước sinh dữ liệu XYZ vào `Dockerfile` (xem dưới) và chạy thành dịch vụ thứ hai |
+| Dữ liệu chạy nằm trong container (`var/`) | Hội thoại, nhật ký, cài đặt và ví dụ đã học **mất** mỗi lần deploy lại hoặc container khởi động lại | Gắn ổ đĩa bền vào `/app/var` (gói trả tiền), hoặc chấp nhận với bản demo |
 | Mỗi tiến trình một doanh nghiệp | Hai doanh nghiệp là hai dịch vụ, hai địa chỉ | Chưa có chuyển doanh nghiệp trên giao diện |
 | Chạy một tiến trình, kho là một file | Phù hợp demo và nhóm nhỏ, không phù hợp nhiều người dùng cùng lúc | Ngoài phạm vi hiện tại |
+| Khóa API của tài khoản mới bị giới hạn số lượt gọi mỗi phút | Nhiều người hỏi cùng lúc thì câu trả lời chậm lại (hệ thống tự chờ rồi gọi lại) | Nâng hạng tài khoản ở nhà cung cấp |
 | Trang quản trị cho phép dựng lại kho | Thao tác nặng, chiếm máy trong lúc chạy | Hạn chế tài khoản admin |
-
-Phác thảo bước thêm cho doanh nghiệp XYZ (chưa thử), đặt sau dòng `RUN python warehouse/generate.py…`:
-
-```dockerfile
-RUN python workspaces/giaovan_xyz/warehouse/generate.py --scale ${DATA_SCALE} \
- && python -m app.onboard giaovan_xyz --stats
-```
-
-rồi đặt biến `WORKSPACE=giaovan_xyz` cho dịch vụ thứ hai.
 
 ## 7. Kiểm tra sau khi deploy
 
 1. `/api/health` trả `"ok": true` và đúng tên doanh nghiệp.
-2. Màn hình đăng nhập **không** hiện mật khẩu admin.
+2. Màn hình đăng nhập **không** có nút tài khoản admin; đăng nhập `admin` / `admin123` bị từ chối.
 3. Đăng nhập analyst, hỏi một câu mẫu trên màn hình chào, có bảng và dấu ✓ xanh.
 4. Thanh trên hiện đúng chế độ (tên mô hình, hoặc bộ luật có sẵn nếu không đặt khóa).
 5. Hỏi một câu tự do; không có cảnh báo vàng. Có cảnh báo nghĩa là khóa API hoặc tên mô hình sai.
