@@ -41,4 +41,6 @@ jobs:
           python3 .github/workflows/smoke.py 8001 "Tỷ lệ giao đúng hạn theo miền tháng 10/2026"
       - name: Bộ nhớ container sau khi trả lời
         if: always()
-        run: docker stats --no-stream --format "{{.Name}}: {{.MemUsage}}" && docker logs abc 2>&1 | tail -20
+        run: |
+          docker stats --no-stream --format "{{.Name}} {{.MemUsage}}"
+          docker logs abc 2>&1 | tail -20
