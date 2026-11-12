@@ -1,6 +1,8 @@
 """
 Xác thực & phân quyền vai trò.
   - Mặc định: tài khoản demo trong config/policies.yml, phát JWT HS256 (ký bằng APP_SECRET).
+  - Triển khai công khai: đặt biến môi trường PASSWORD_<TÊN TÀI KHOẢN VIẾT HOA> (vd PASSWORD_ADMIN) để thay mật khẩu
+    trong policies.yml; tài khoản có mật khẩu đặt theo cách này không bao giờ được liệt kê trên màn hình đăng nhập.
   - Supabase Auth (tùy chọn): đặt SUPABASE_JWT_SECRET -> chấp nhận access token của Supabase; vai trò lấy từ
     app_metadata.role (analyst/admin), RLS lấy từ app_metadata.rls (vd {"vung": ["B"]}).
 """
@@ -11,6 +13,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 
 from fastapi import Depends, Header, HTTPException
@@ -52,10 +55,30 @@ def jwt_decode(token: str, secret: str) -> dict | None:
         return None
 
 
+def effective_password(username: str, u: dict) -> tuple[str, bool]:
+    """(mật khẩu hiệu lực, có phải mật khẩu bí mật đặt qua biến môi trường không)."""
+    env = os.environ.get("PASSWORD_" + re.sub(r"\W", "_", username).upper())
+    return (env, True) if env else (str(u.get("password")), False)
+
+
+def demo_users() -> list[dict]:
+    """Tài khoản được phép hiện kèm mật khẩu trên màn hình đăng nhập: chỉ khi bật demo_login (policies.yml, hoặc biến môi
+    trường DEMO_LOGIN=0/1 ghi đè) và chỉ những tài khoản còn dùng mật khẩu mẫu công khai."""
+    pol = config.policies()
+    flag = os.environ.get("DEMO_LOGIN", "").strip().lower()
+    on = flag in ("1", "true", "yes") if flag else bool(pol.get("demo_login"))
+    out = []
+    for name, u in (pol.get("users") or {}).items() if on else []:
+        pw, secret = effective_password(name, u)
+        if not secret:
+            out.append(dict(u, username=name, password=pw))
+    return out
+
+
 def login(username: str, password: str) -> dict | None:
     users = config.policies().get("users", {})
     u = users.get(username)
-    if not u or not hmac.compare_digest(str(u.get("password")), str(password)):
+    if not u or not hmac.compare_digest(effective_password(username, u)[0].encode(), str(password).encode()):
         return None
     payload = {"sub": username, "role": u["role"], "rls": u.get("rls") or {}, "name": u.get("full_name", username),
                "iat": int(time.time()), "exp": int(time.time()) + TTL}

@@ -98,12 +98,11 @@ def public_info():
     """
     p, pol = profile.get_profile(), config.policies()
     demo = []
-    if pol.get("demo_login"):
-        for name, u in (pol.get("users") or {}).items():
-            role = (pol.get("roles") or {}).get(u.get("role"), {})
-            demo.append({"username": name, "password": u.get("password"), "full_name": u.get("full_name") or name,
-                         "role_label": role.get("label") or u.get("role"),
-                         "rls": "; ".join(f"{k}: {', '.join(map(str, v))}" for k, v in (u.get("rls") or {}).items())})
+    for u in auth.demo_users():      # tài khoản có mật khẩu bí mật (PASSWORD_<TÊN>) không bao giờ nằm trong danh sách này
+        role = (pol.get("roles") or {}).get(u.get("role"), {})
+        demo.append({"username": u["username"], "password": u["password"], "full_name": u.get("full_name") or u["username"],
+                     "role_label": role.get("label") or u.get("role"),
+                     "rls": "; ".join(f"{k}: {', '.join(map(str, v))}" for k, v in (u.get("rls") or {}).items())})
     return {"company": p["company"]["name"], "industry": p["company"].get("industry") or "", "assistant": p["assistant"]["name"],
             "workspace": config.WORKSPACE or "(mặc định)", "demo_users": demo}
 
