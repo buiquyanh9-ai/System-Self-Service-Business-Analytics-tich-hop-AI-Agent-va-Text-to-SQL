@@ -1,5 +1,8 @@
 var/
-__pycache__/
+**/var/
+**/__pycache__/
 .pytest_cache/
 .git/
+.github/
 .env
+.vscode/

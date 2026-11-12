@@ -1,12 +1,21 @@
-# Triển khai lên Render (Blueprint). Railway/Fly cũng dùng được Dockerfile này.
+# Triển khai lên Render (New -> Blueprint). Railway/Fly cũng dùng được Dockerfile này.
+# Hai dịch vụ dùng chung một image, mỗi dịch vụ phục vụ một doanh nghiệp mẫu. Chỉ cần một thì xóa dịch vụ kia.
+#
+# Bảo mật cho bản công khai:
+#   - APP_SECRET và PASSWORD_ADMIN do Render tự sinh: mật khẩu admin mẫu trên GitHub không dùng được, tài khoản admin
+#     không hiện trên màn hình đăng nhập. Xem mật khẩu admin trong Dashboard -> Environment.
+#   - Các tài khoản analyst vẫn hiện làm nút dùng thử (chỉ đọc, dữ liệu giả lập). Muốn ẩn hết: thêm DEMO_LOGIN=0.
+#   - plan: free tự ngủ sau một lúc không có truy cập và mất dữ liệu chạy (hội thoại, nhật ký) khi khởi động lại.
 services:
   - type: web
-    name: data01-text2sql
+    name: data01-dienmay-abc
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/health
     envVars:
       - key: APP_SECRET
+        generateValue: true
+      - key: PASSWORD_ADMIN
         generateValue: true
       - key: OPENROUTER_API_KEY    # để trống cả hai khóa -> chạy bộ luật offline
         sync: false
@@ -18,3 +27,21 @@ services:
         value: auto
       - key: SUPABASE_JWT_SECRET   # tùy chọn: chấp nhận access token của Supabase Auth
         sync: false
+  - type: web
+    name: data01-giaovan-xyz
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: WORKSPACE
+        value: giaovan_xyz
+      - key: APP_SECRET
+        generateValue: true
+      - key: PASSWORD_ADMIN
+        generateValue: true
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-6-luna
+      - key: LLM_MODE
+        value: auto
