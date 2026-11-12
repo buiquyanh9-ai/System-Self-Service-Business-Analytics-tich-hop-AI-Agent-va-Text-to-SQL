@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, config, cost, dq, evals, llm, sqlcheck
+from . import auth, config, cost, dq, evals, llm, profile, sqlcheck
 from .agent import SAMPLE_QUESTIONS, get_agent
 from .auth import current_user, require_admin
 from .catalog import get_catalog
@@ -90,6 +90,24 @@ def login(body: LoginIn):
     return r
 
 
+@app.get("/api/public")
+def public_info():
+    """Thông tin hiện trên màn hình đăng nhập, không cần đăng nhập: doanh nghiệp đang phục vụ và (nếu bật) tài khoản demo.
+
+    Tài khoản demo chỉ được liệt kê khi policies.yml đặt `demo_login: true` (dữ liệu giả lập); triển khai thật thì tắt.
+    """
+    p, pol = profile.get_profile(), config.policies()
+    demo = []
+    if pol.get("demo_login"):
+        for name, u in (pol.get("users") or {}).items():
+            role = (pol.get("roles") or {}).get(u.get("role"), {})
+            demo.append({"username": name, "password": u.get("password"), "full_name": u.get("full_name") or name,
+                         "role_label": role.get("label") or u.get("role"),
+                         "rls": "; ".join(f"{k}: {', '.join(map(str, v))}" for k, v in (u.get("rls") or {}).items())})
+    return {"company": p["company"]["name"], "industry": p["company"].get("industry") or "", "assistant": p["assistant"]["name"],
+            "workspace": config.WORKSPACE or "(mặc định)", "demo_users": demo}
+
+
 @app.get("/api/me")
 def me(user: UserCtx = Depends(current_user)):
     return {"username": user.username, "role": user.role, "rls": user.rls, "full_name": user.full_name,
@@ -101,8 +119,9 @@ def app_config(user: UserCtx = Depends(current_user)):
     st = get_store().get_settings()
     sem = get_semantic()
     return {"samples": SAMPLE_QUESTIONS, "mode": llm.resolve_mode(st), "llm_mode_setting": st["llm_mode"],
-            "credentials": llm.credentials_available(), "model": st["llm_model"], "always_review": st["always_review"],
-            "anchor": get_catalog().anchor_date(),
+            "credentials": llm.any_credentials(), "model": llm.effective_model(st), "always_review": st["always_review"],
+            "anchor": get_catalog().anchor_date(), "profile": profile.public_summary(),
+            "workspace": config.WORKSPACE or "(mặc định)", "workspaces": [w or "(mặc định)" for w in config.list_workspaces()],
             "metrics": [{"name": n, "label": m["label"], "owner": m.get("owner")} for n, m in sem.metrics.items()],
             "cost": user.role_cfg.get("cost"), "hitl": config.policies().get("hitl")}
 
@@ -204,7 +223,8 @@ def schema(user: UserCtx = Depends(current_user)):
     cat, sem = get_catalog(), get_semantic()
     role = user.role_cfg
     tables = []
-    for t in cat.visible_tables(role) if role.get("can_manage_schema") else [x for x in cat.tables.values() if x["schema"] == "dw"]:
+    serving = [x for x in cat.tables.values() if x["schema"] == profile.serving_schema()]
+    for t in cat.visible_tables(role) if role.get("can_manage_schema") else serving:
         d = cat.describe(t["name"], role, max_values=15)
         d.update({"schema": t["schema"], "bytes": t["bytes"], "synonyms": t["synonyms"]})
         tables.append(d)
@@ -225,7 +245,7 @@ def update_catalog(body: CatalogIn, user: UserCtx = Depends(require_admin)):
 
 @app.get("/api/admin/settings")
 def get_settings(user: UserCtx = Depends(require_admin)):
-    return {"settings": get_store().get_settings(), "credentials": llm.credentials_available(), "policies": config.policies()["roles"]}
+    return {"settings": get_store().get_settings(), "credentials": llm.any_credentials(), "policies": config.policies()["roles"]}
 
 
 @app.put("/api/admin/settings")
@@ -353,7 +373,8 @@ def reset_fewshots(source: str = "optimizer", user: UserCtx = Depends(require_ad
 @app.get("/api/health")
 def health():
     cat = get_catalog()
-    return {"ok": True, "tables": len(cat.tables), "anchor": cat.anchor_date()}
+    return {"ok": True, "tables": len(cat.tables), "anchor": cat.anchor_date(),
+            "workspace": config.WORKSPACE or "(mặc định)", "company": profile.get_profile()["company"]["name"]}
 
 
 # ------------------------------------------------------------------ giao diện

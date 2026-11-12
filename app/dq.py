@@ -13,13 +13,14 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import re
 import statistics
 import time
 
 import sqlglot
 from sqlglot import exp
 
-from . import config
+from . import config, profile
 from .catalog import get_catalog
 from .textutil import fmt_money, fmt_number, fmt_pct, norm
 from .warehouse import get_warehouse
@@ -79,10 +80,15 @@ def run_checks() -> dict:
                 msg.append(f"cột bị mất: {', '.join(removed)}")
             fs.append(_f(f"schema_drift_{table}", "schema_drift", f"Schema drift ở {table}", "critical" if removed else "warning",
                          f"Nguồn {table} thay đổi cấu trúc so với data contract — " + "; ".join(msg) +
-                         ". Cột mới chưa được đưa vào model nên không có trong kho dw.",
+                         f". Cột mới chưa được đưa vào model nên không có trong kho {profile.serving_schema()}.",
                          table=table, evidence=det,
                          recommendation="Cập nhật config/contracts.yml và model staging nếu cột mới có giá trị nghiệp vụ."))
 
+    if profile.domain_pack() != "retail_abc":
+        # doanh nghiệp không khai báo gói ngành: chạy bộ kiểm định tổng quát dựng từ catalog và semantic layer
+        return _finish(fs + _generic_checks(wh, cat, anchor), active, anchor, t0)
+
+    # ===== Gói retail_abc: các kiểm định biết trước cấu trúc nguồn POS/ERP/CRM của doanh nghiệp bán lẻ mẫu =====
     # 2. mã trạng thái chưa map
     rows = wh.fetch("SELECT nguon, trang_thai_goc, COUNT(*) FROM stg.stg_don_hang WHERE trang_thai = 'KHAC' GROUP BY 1, 2 ORDER BY 3 DESC")
     if rows:
@@ -272,14 +278,119 @@ def run_checks() -> dict:
     fs.append(_f("freshness", "freshness", "Độ tươi dữ liệu", "warning" if stale else "ok",
                  ("Bảng chậm cập nhật: " + ", ".join(f"{s['table']} (trễ {s['lag_days']} ngày)" for s in stale)) if stale
                  else "Các bảng sự kiện đều cập nhật trong vòng 7 ngày.", evidence=fresh, status="open" if stale else "ok"))
+    return _finish(fs, active, anchor, t0)
 
+
+def _finish(fs: list[dict], active: dict, anchor: dt.date, t0: float) -> dict:
     order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
     fs.sort(key=lambda f: (f["status"] in ("handled", "fixed", "ok"), order.get(f["severity"], 9)))
     rep = {"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"), "elapsed_s": round(time.time() - t0, 2), "anchor": anchor.isoformat(),
            "summary": {s: sum(1 for f in fs if f["severity"] == s and f["status"] == "open") for s in ("critical", "warning", "info")},
            "active_fixes": [f for f in active.get("fixes", [])], "findings": fs}
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text(json.dumps(rep, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
     return rep
+
+
+def _generic_checks(wh, cat, anchor: dt.date) -> list[dict]:
+    """Kiểm định dùng được cho mọi doanh nghiệp: không biết trước tên bảng, chỉ dựa vào catalog, hồ sơ và semantic layer.
+
+    Gồm: độ tươi của các bảng có cột ngày, khóa ngoại mồ côi theo các đường join đã khai báo, bất thường số dòng theo
+    ngày trên bảng mốc, trôi lệch phân phối (PSI + chi-square) của các cột phân loại trên bảng mốc.
+    """
+    from scipy import stats
+    from .semantic import get_semantic
+    sem, schema, fs = get_semantic(), profile.serving_schema(), []
+
+    # a. độ tươi
+    fresh = []
+    for fq, t in cat.tables.items():
+        p = t.get("partition")
+        if t["schema"] != schema or not p:
+            continue
+        mx = t["columns"][p["column"]].get("max")
+        fresh.append({"table": fq, "max_date": mx, "lag_days": (anchor - dt.date.fromisoformat(str(mx)[:10])).days if mx else None})
+    stale = [f for f in fresh if f["lag_days"] is not None and f["lag_days"] > 7]
+    fs.append(_f("freshness", "freshness", "Độ tươi dữ liệu", "warning" if stale else "ok",
+                 ("Bảng chậm cập nhật: " + ", ".join(f"{s['table']} (trễ {s['lag_days']} ngày)" for s in stale)) if stale
+                 else "Các bảng sự kiện đều cập nhật trong vòng 7 ngày.", evidence=fresh, status="open" if stale else "ok"))
+
+    # b. khóa ngoại mồ côi: mỗi đường join trực tiếp của semantic layer là một ràng buộc tham chiếu cần kiểm
+    seen = set()
+    for mdl in sem.models.values():
+        for j in (mdl.get("joins") or {}).values():
+            m = re.fullmatch(r"\s*(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)\s*", j.get("on") or "")
+            if j.get("requires") or not m or mdl["alias"] not in (m.group(1), m.group(3)):
+                continue
+            fk, pk = (m.group(2), m.group(4)) if m.group(1) == mdl["alias"] else (m.group(4), m.group(2))
+            if (mdl["table"], fk, j["table"]) in seen:
+                continue
+            seen.add((mdl["table"], fk, j["table"]))
+            n = wh.scalar(f"SELECT COUNT(*) FROM {mdl['table']} f WHERE f.{fk} IS NOT NULL "
+                          f"AND NOT EXISTS (SELECT 1 FROM {j['table']} d WHERE d.{pk} = f.{fk})")
+            if n:
+                fs.append(_f(f"orphan_{mdl['table']}_{fk}".replace(".", "_"), "referential",
+                             f"Khóa ngoại mồ côi: {mdl['table']}.{fk}", "warning",
+                             f"{fmt_number(n)} dòng của {mdl['table']} có {fk} không tồn tại trong {j['table']}.{pk} — "
+                             f"các phân tích theo chiều lấy từ {j['table']} sẽ bỏ sót những dòng này.",
+                             table=mdl["table"], columns=[fk],
+                             recommendation="Bổ sung bản ghi còn thiếu ở bảng chiều hoặc nạp lại nguồn."))
+
+    a = profile.anchor()
+    if not a or not cat.get(a[0]):
+        return fs
+    table, col = a
+    # c. bất thường số dòng theo ngày (so với trung vị cùng thứ của 4 tuần trước)
+    cnt = wh.fetch(f"SELECT CAST({col} AS DATE), COUNT(*) FROM {table} WHERE {col} >= DATE '{anchor - dt.timedelta(days=90)}' "
+                   "GROUP BY 1 ORDER BY 1")
+    series = {str(d)[:10]: n for d, n in cnt}
+    anomalies = []
+    for d, n in series.items():
+        day = dt.date.fromisoformat(d)
+        ref = [series.get(str(day - dt.timedelta(weeks=k))) for k in range(1, 5)]
+        ref = [x for x in ref if x]
+        if day < anchor - dt.timedelta(days=30) or len(ref) < 3:
+            continue
+        ratio = n / statistics.median(ref)
+        if ratio < 0.6 or ratio > 1.8:
+            anomalies.append({"ngay": d, "so_dong": n, "trung_vi_cung_thu": statistics.median(ref), "ty_le": round(ratio, 2)})
+    if anomalies:
+        last = anomalies[-1]
+        partial = last["ngay"] == anchor.isoformat() and last["ty_le"] < 0.6
+        fs.append(_f("volume_anomaly", "volume", "Số dòng theo ngày bất thường", "warning",
+                     (f"Ngày dữ liệu mới nhất {last['ngay']} chỉ có {fmt_number(last['so_dong'])} dòng, bằng "
+                      f"{fmt_pct(last['ty_le'] * 100)} mức thường lệ của cùng thứ — nhiều khả năng dữ liệu chưa nạp đủ."
+                      if partial else f"{len(anomalies)} ngày có số dòng của {table} lệch mạnh so với cùng thứ 4 tuần trước: "
+                      + ", ".join(x["ngay"] for x in anomalies[:8]) + "."),
+                     table=table, evidence=anomalies,
+                     test={"name": "Tỷ lệ so với trung vị cùng thứ 4 tuần trước", "threshold": "<0.6 hoặc >1.8"},
+                     recommendation="Kiểm tra job nạp dữ liệu của các ngày này trước khi dùng cho báo cáo."))
+
+    # d. trôi lệch phân phối của các cột phân loại trên bảng mốc
+    skip = set(profile.get_profile()["quality"].get("skip_drift_columns") or [])
+    for cname, c in cat.get(table)["columns"].items():
+        if cname in skip or not 2 <= len(c.get("values") or []) <= 12:
+            continue
+        recent = dict(wh.fetch(f"SELECT {cname}, COUNT(*) FROM {table} WHERE {col} >= DATE '{anchor - dt.timedelta(days=30)}' GROUP BY 1"))
+        before = dict(wh.fetch(f"SELECT {cname}, COUNT(*) FROM {table} WHERE {col} >= DATE '{anchor - dt.timedelta(days=120)}' "
+                               f"AND {col} < DATE '{anchor - dt.timedelta(days=30)}' GROUP BY 1"))
+        if not recent or not before:
+            continue
+        psi = _psi(recent, before)
+        keys = sorted(set(recent) | set(before), key=str)
+        chi = stats.chi2_contingency([[recent.get(k, 0) + 0.5 for k in keys], [before.get(k, 0) + 0.5 for k in keys]])
+        sev = "warning" if psi > 0.25 else ("info" if psi > 0.1 else "ok")
+        sa, sb = sum(recent.values()), sum(before.values())
+        label = re.split(r"\s*(?:->|\(|—|:|,)", c.get("description") or "")[0].strip() or cname
+        fs.append(_f(f"psi_{cname}", "distribution_drift", f"Cơ cấu {label}: 30 ngày gần nhất so với 90 ngày trước", sev,
+                     f"PSI = {psi:.3f} ({'trôi lệch đáng kể' if psi > 0.25 else 'thay đổi vừa phải' if psi > 0.1 else 'ổn định'}); "
+                     f"chi-square p = {chi.pvalue:.2e}.", table=table, columns=[cname],
+                     test={"name": "Population Stability Index + chi-square", "psi": round(psi, 4),
+                           "chi2": round(float(chi.statistic), 2), "p_value": float(chi.pvalue)},
+                     evidence=[{"gia_tri": k, "ty_trong_gan_day": round(recent.get(k, 0) * 100 / sa, 2),
+                                "ty_trong_truoc_do": round(before.get(k, 0) * 100 / sb, 2)} for k in keys],
+                     status="ok" if sev == "ok" else "open"))
+    return fs
 
 
 def latest_report(run_if_missing: bool = True) -> dict | None:
@@ -294,15 +405,17 @@ def known_issues() -> list[dict]:
     if not rep:
         return []
     out = []
+    anchor = profile.anchor()
     for f in rep["findings"]:
-        if f["status"] != "open" or f["severity"] not in ("critical", "warning") or not f.get("table", "").startswith("dw."):
+        if f["status"] != "open" or f["severity"] not in ("critical", "warning") \
+                or not f.get("table", "").startswith(profile.serving_schema() + "."):
             continue
         if f["check"] in ("distribution_drift", "outliers") and f.get("columns"):
             out.append({"table": f["table"], "columns": f.get("columns"), "since": f.get("since"),
                         "message": f["title"] + (f" (từ {f['since']})" if f.get("since") else ""),
                         "hint": "Kết quả có thể sai lệch — xem trang Chất lượng dữ liệu." + (" Admin có quy tắc sửa đề xuất." if f.get("fix") else "")})
-        if f["check"] == "volume":
-            out.append({"table": "dw.fct_ct_dh", "columns": ["ngay_dh"], "since": rep.get("anchor"), "requires_range": True,
+        if f["check"] == "volume" and anchor:
+            out.append({"table": anchor[0], "columns": [anchor[1]], "since": rep.get("anchor"), "requires_range": True,
                         "message": "Ngày dữ liệu mới nhất có thể chưa nạp đủ", "hint": "Tránh so sánh ngày/tháng hiện tại với kỳ đầy đủ."})
     return out
 

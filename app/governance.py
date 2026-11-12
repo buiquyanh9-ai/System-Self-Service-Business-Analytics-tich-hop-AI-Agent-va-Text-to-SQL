@@ -162,6 +162,9 @@ def validate(sql: str, user: UserCtx, max_rows: int | None = None, dry_run: bool
     ctes = _cte_names(tree)
     allowed_schemas = role.get("schemas", [])
     all_tables = list(cat.tables)
+    from .profile import serving_schema
+    serving = serving_schema()
+    data_schemas = {x["schema"] for x in cat.tables.values()}
     for t in tree.find_all(exp.Table):
         if not isinstance(t.this, exp.Identifier):
             fname = _func_name(t.this) if isinstance(t.this, exp.Func) else type(t.this).__name__.lower()
@@ -176,10 +179,10 @@ def validate(sql: str, user: UserCtx, max_rows: int | None = None, dry_run: bool
         if not db and name in ctes:
             continue
         if not db:
-            db = "dw"
-            t.set("db", exp.to_identifier("dw"))
+            db = serving
+            t.set("db", exp.to_identifier(serving))
         fq = f"{db}.{name}"
-        if db not in {"dw", "stg", "raw", "ref"}:
+        if db not in data_schemas:      # chỉ các schema dữ liệu có trong catalog; schema hệ thống (information_schema...) bị chặn
             v.error("FORBIDDEN_SCHEMA", f"Schema hệ thống '{db}' không được phép truy cập.")
             continue
         if fq not in cat.tables:
@@ -189,7 +192,7 @@ def validate(sql: str, user: UserCtx, max_rows: int | None = None, dry_run: bool
             continue
         if db not in allowed_schemas:
             v.error("FORBIDDEN_SCHEMA", f"Vai trò {user.role} không được truy cập schema '{db}' (bảng {fq}).",
-                    "Analyst chỉ truy vấn tầng dw (dữ liệu đã làm sạch).")
+                    f"Vai trò này chỉ truy vấn tầng {serving} (dữ liệu đã làm sạch).")
             continue
         if fq not in v.tables:
             v.tables.append(fq)

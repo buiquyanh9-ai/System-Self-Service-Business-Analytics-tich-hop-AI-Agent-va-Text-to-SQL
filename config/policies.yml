@@ -34,6 +34,9 @@ hitl:
   large_table_rows: 100000
   hitl_min_bytes: 15_000_000
 
+# true = liệt kê các tài khoản dưới đây trên màn hình đăng nhập (chỉ dùng với dữ liệu giả lập)
+demo_login: true
+
 users:
   admin:       {password: admin123,   role: admin,   full_name: "Quản trị dữ liệu"}
   analyst:     {password: analyst123, role: analyst, full_name: "Chuyên viên phân tích (toàn quốc)"}

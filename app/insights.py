@@ -16,13 +16,33 @@ import math
 import re
 import statistics
 
+from . import profile
+from .catalog import get_catalog
 from .semantic import get_semantic, q as sqlq
 from .textutil import fmt_money, fmt_number, fmt_pct, fmt_value
 
-DRIVER_DIMS = ["vung", "kenh", "nganh_hang", "loai_ch", "chi_nhanh", "thuong_hieu"]
-COARSE = {"vung": 0, "kenh": 1, "nganh_hang": 2, "loai_ch": 3, "thuong_hieu": 4, "chi_nhanh": 5}
-DRILL = {"vung": ["chi_nhanh", "nganh_hang"], "kenh": ["vung", "nganh_hang"], "nganh_hang": ["vung", "thuong_hieu"],
-         "loai_ch": ["chi_nhanh"], "thuong_hieu": ["vung"], "chi_nhanh": ["nganh_hang"]}
+MAX_AUTO_DRIVERS, MAX_DRIVER_VALUES = 6, 60
+
+
+def analysis_config(sem, metric: str) -> dict:
+    """Cấu hình phân tích biến động của doanh nghiệp (semantic_layer.yml: analysis).
+
+      driver_dimensions: các chiều đem ra phân rã, theo thứ tự ưu tiên
+      coarseness:        chiều càng thô (số nhỏ) càng được ưu tiên khi mức giải thích ngang nhau
+      drill:             chiều -> các chiều đào sâu tiếp
+      decomposition:     chỉ số tiền -> chỉ số đếm để tách "số lượng × giá trị trung bình"
+    Doanh nghiệp không khai báo thì tự chọn: các chiều không phải thời gian mà chỉ số hỗ trợ, có danh mục 2–60 giá trị.
+    """
+    a = sem.cfg.get("analysis") or {}
+    supported = sem.dims_for_metric(metric)
+    if a.get("driver_dimensions"):
+        drivers = [d for d in a["driver_dimensions"] if d in supported]
+    else:
+        drivers = [d for d in supported if sem.dims[d].get("kind") != "time"
+                   and 2 <= len(sem.dim_values(d)) <= MAX_DRIVER_VALUES][:MAX_AUTO_DRIVERS]
+    return {"drivers": drivers, "coarse": a.get("coarseness") or {d: i for i, d in enumerate(drivers)},
+            "drill": a.get("drill") or {}, "decomposition": (a.get("decomposition") or {}).get(metric),
+            "month": next((n for n, d in sem.dims.items() if d.get("kind") == "time" and d.get("grain") == "month"), None)}
 
 
 class Facts:
@@ -54,6 +74,7 @@ def analyze(plan: dict, run, anchor: dt.date) -> dict:
     facts = Facts()
     queries = []
     causes = []
+    cfg = analysis_config(sem, metric)
 
     def runq(p, purpose):
         c = sem.compile(p)
@@ -80,8 +101,11 @@ def analyze(plan: dict, run, anchor: dt.date) -> dict:
     # 2. ý nghĩa thống kê: so với phân phối biến động theo tháng trong lịch sử
     sig = None
     try:
-        _, hist = runq({"metrics": [metric], "dimensions": ["thang"], "filters": filters,
-                        "time_range": {"start": "2025-01-01", "end": cur["start"]}}, "Chuỗi lịch sử theo tháng (kiểm định)")
+        if not cfg["month"] or cfg["month"] not in sem.dims_for_metric(metric):
+            raise ValueError("semantic layer chưa có chiều thời gian theo tháng cho chỉ số này")
+        _, hist = runq({"metrics": [metric], "dimensions": [cfg["month"]], "filters": filters,
+                        "time_range": {"start": get_catalog().data_start(), "end": cur["start"]}},
+                       "Chuỗi lịch sử theo tháng (kiểm định)")
         series = [r[1] for r in hist["rows"] if r[1] is not None]
         lag_m = round((dt.date.fromisoformat(cur["start"]) - dt.date.fromisoformat(prev["start"])).days / 30.4)
         lag = 12 if lag_m >= 11 else 1
@@ -107,8 +131,8 @@ def analyze(plan: dict, run, anchor: dt.date) -> dict:
     # 3. phân rã theo chiều
     filtered_dims = {f["dimension"] for f in filters if len(f.get("values") or []) == 1}
     drivers = []
-    for d in DRIVER_DIMS:
-        if d in filtered_dims or d not in sem.dims_for_metric(metric):
+    for d in cfg["drivers"]:
+        if d in filtered_dims:
             continue
         try:
             _, r = runq({"metrics": [metric], "dimensions": [d], "filters": filters, "time_range": cur, "compare": prev},
@@ -136,7 +160,7 @@ def analyze(plan: dict, run, anchor: dt.date) -> dict:
                         "lift": lift, "n_members": len(items), "items": items[:12]})
     best = None
     if drivers:
-        best = max(drivers, key=lambda x: (x["lift"] - 0.03 * COARSE.get(x["dimension"], 5)))
+        best = max(drivers, key=lambda x: (x["lift"] - 0.03 * cfg["coarse"].get(x["dimension"], 5)))
     drill = []
     if best and additive:
         top = best["items"][0]
@@ -145,7 +169,7 @@ def analyze(plan: dict, run, anchor: dt.date) -> dict:
         t_d = facts.add("drv_delta", top["delta"], fmt, ("driver", best["dimension"], 0, "delta"))
         t_c = facts.add("drv_share", (top["contribution_pct"] or 0), "pct_abs", ("driver", best["dimension"], 0, "contribution_pct"))
         lines.append(f"Theo {l_dim}, {t_m} đóng góp nhiều nhất vào mức {direction} ({t_d}, tương đương {t_c} tổng biến động).")
-        for dd in DRILL.get(best["dimension"], [])[:2]:
+        for dd in (cfg["drill"].get(best["dimension"]) or [])[:2]:
             if dd in filtered_dims or dd not in sem.dims_for_metric(metric):
                 continue
             f2 = filters + [{"dimension": best["dimension"], "op": "in", "values": [top["member"]]}]
@@ -169,41 +193,47 @@ def analyze(plan: dict, run, anchor: dt.date) -> dict:
                 ts = [facts.add(f"drill_{i}", n, "label", ("drill", 0, i, "member")) for i, n in enumerate(names)]
                 lines.append(f"Trong {t_m}, biến động tập trung ở {d0['label'].lower()}: {', '.join(ts)}.")
 
-    # 4. phân rã sản lượng × giá trị (chỉ số doanh thu)
+    # 4. phân rã số lượng × giá trị trung bình (chỉ số tiền có khai báo chỉ số đếm đi kèm)
     decomposition = None
-    if metric in ("doanh_thu_thuan", "doanh_thu_gop") and best:
+    dec = cfg["decomposition"]
+    if dec and best and dec.get("count") in sem.metrics:
+        cnt_m, unit_m = dec["count"], dec.get("units") if dec.get("units") in sem.metrics else None
+        cnt_label = dec.get("count_label") or sem.metrics[cnt_m]["label"].lower()
+        val_label = dec.get("value_label") or f"giá trị trung bình mỗi {cnt_label}"
         seg = filters + ([{"dimension": best["dimension"], "op": "in", "values": [best["items"][0]["member"]]}] if additive else [])
         try:
             res = {}
             for lab, tr in (("now", cur), ("prev", prev)):
-                _, r = runq({"metrics": [metric, "so_don", "so_luong_ban"], "dimensions": [], "filters": seg, "time_range": tr},
-                            f"Số đơn & sản lượng ({'kỳ này' if lab == 'now' else 'kỳ so sánh'})")
+                _, r = runq({"metrics": [metric, cnt_m] + ([unit_m] if unit_m else []), "dimensions": [], "filters": seg,
+                             "time_range": tr}, f"{cnt_label.capitalize()} & sản lượng ({'kỳ này' if lab == 'now' else 'kỳ so sánh'})")
                 res[lab] = dict(zip(r["columns"], r["rows"][0])) if r["rows"] else {}
             rn, rp = res["now"], res["prev"]
-            if rp.get("so_don") and rn.get("so_don"):
-                aov_n, aov_p = (rn[metric] or 0) / rn["so_don"], (rp[metric] or 0) / rp["so_don"]
-                vol = (rn["so_don"] - rp["so_don"]) * aov_p
-                val = rn["so_don"] * (aov_n - aov_p)
-                decomposition = {"segment": best["items"][0]["member"] if additive else "toàn bộ", "orders_now": rn["so_don"],
-                                 "orders_prev": rp["so_don"], "orders_pct": _pct(rn["so_don"], rp["so_don"]),
+            if rp.get(cnt_m) and rn.get(cnt_m):
+                aov_n, aov_p = (rn[metric] or 0) / rn[cnt_m], (rp[metric] or 0) / rp[cnt_m]
+                vol = (rn[cnt_m] - rp[cnt_m]) * aov_p
+                val = rn[cnt_m] * (aov_n - aov_p)
+                decomposition = {"segment": best["items"][0]["member"] if additive else "toàn bộ", "orders_now": rn[cnt_m],
+                                 "orders_prev": rp[cnt_m], "orders_pct": _pct(rn[cnt_m], rp[cnt_m]),
                                  "aov_now": aov_n, "aov_prev": aov_p, "aov_pct": _pct(aov_n, aov_p),
-                                 "units_now": rn.get("so_luong_ban"), "units_prev": rp.get("so_luong_ban"),
-                                 "volume_effect": vol, "value_effect": val}
+                                 "units_now": rn.get(unit_m) if unit_m else None, "units_prev": rp.get(unit_m) if unit_m else None,
+                                 "volume_effect": vol, "value_effect": val, "count_label": cnt_label, "value_label": val_label}
                 to = facts.add("ord_pct", decomposition["orders_pct"] or 0, "pct_signed", ("decomp", "orders_pct"))
                 ta = facts.add("aov_pct", decomposition["aov_pct"] or 0, "pct_signed", ("decomp", "aov_pct"))
-                driver_word = "giá trị đơn trung bình" if abs(val) > abs(vol) else "số lượng đơn"
-                lines.append(f"Phân rã: số đơn {to}, giá trị đơn trung bình {ta} — biến động chủ yếu do {driver_word}.")
+                driver_word = val_label if abs(val) > abs(vol) else (dec.get("count_driver_label") or cnt_label)
+                lines.append(f"Phân rã: {cnt_label} {to}, {val_label} {ta} — biến động chủ yếu do {driver_word}.")
         except Exception:
             pass
 
-    # 5. nguyên nhân gốc
-    seg_filters = list(filters)
-    if best and additive and best["dimension"] in ("vung", "chi_nhanh", "kenh", "loai_ch", "nganh_hang"):
-        seg_filters = filters + [{"dimension": best["dimension"], "op": "in", "values": [best["items"][0]["member"]]}]
-    causes += _check_unit_drift(run, queries, cur, prev, seg_filters, sem)
-    causes += _check_closures(run, queries, cur, prev, drivers, drill)
-    causes += _check_stockout(run, queries, cur, prev, drivers, drill, filters, best)
-    causes += _check_calendar(run, queries, cur, prev, anchor)
+    # 5. nguyên nhân gốc: gói kiểm tra theo ngành (nếu hồ sơ doanh nghiệp bật) + kiểm tra chung
+    if profile.domain_pack() == "retail_abc":
+        seg_filters = list(filters)
+        if best and additive and best["dimension"] in ("vung", "chi_nhanh", "kenh", "loai_ch", "nganh_hang"):
+            seg_filters = filters + [{"dimension": best["dimension"], "op": "in", "values": [best["items"][0]["member"]]}]
+        causes += _check_unit_drift(run, queries, cur, prev, seg_filters, sem)
+        causes += _check_closures(run, queries, cur, prev, drivers, drill)
+        causes += _check_stockout(run, queries, cur, prev, drivers, drill, filters, best)
+        causes += _check_promotions(run, cur, prev)
+    causes += _check_incomplete_period(cur, anchor)
 
     dq = [c for c in causes if c["kind"] == "data_quality"]
     biz = [c for c in causes if c["kind"] == "business"]
@@ -364,7 +394,16 @@ def _check_stockout(run, queries, cur, prev, drivers, drill, filters, best):
     return out
 
 
-def _check_calendar(run, queries, cur, prev, anchor):
+def _check_incomplete_period(cur, anchor):
+    """Kiểm tra chung cho mọi doanh nghiệp: kỳ đang phân tích đã có đủ dữ liệu chưa."""
+    if dt.date.fromisoformat(cur["end"]) <= anchor + dt.timedelta(days=1):
+        return []
+    return [{"kind": "data_quality", "severity": "warning", "title": "Kỳ phân tích chưa đủ dữ liệu",
+             "short": f"kỳ {cur['label']} mới có dữ liệu đến {anchor.strftime('%d/%m/%Y')}",
+             "message": "So sánh kỳ chưa kết thúc với kỳ đầy đủ sẽ cho biến động âm giả tạo."}]
+
+
+def _check_promotions(run, cur, prev):
     out = []
     sql = ("SELECT k.ten_km, k.tu_ngay, k.den_ngay FROM dw.dim_km k WHERE k.tu_ngay < DATE '{e}' AND k.den_ngay >= DATE '{s}'")
     promos = {}
@@ -384,9 +423,4 @@ def _check_calendar(run, queries, cur, prev, anchor):
             out.append({"kind": "calendar", "severity": "info", "title": "Khác biệt lịch khuyến mãi",
                         "short": "; ".join(msg), "message": "Lịch khuyến mãi khác nhau giữa hai kỳ: " + "; ".join(msg) + ".",
                         "evidence": promos})
-    end = dt.date.fromisoformat(cur["end"])
-    if end > anchor + dt.timedelta(days=1):
-        out.append({"kind": "data_quality", "severity": "warning", "title": "Kỳ phân tích chưa đủ dữ liệu",
-                    "short": f"kỳ {cur['label']} mới có dữ liệu đến {anchor.strftime('%d/%m/%Y')}",
-                    "message": "So sánh kỳ chưa kết thúc với kỳ đầy đủ sẽ cho biến động âm giả tạo."})
     return out

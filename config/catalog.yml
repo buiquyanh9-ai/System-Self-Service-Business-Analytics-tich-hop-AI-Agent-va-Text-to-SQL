@@ -3,6 +3,29 @@
 # Được index vào bộ tìm kiếm schema (RAG) và đưa vào prompt cho LLM. Admin có thể sửa trên giao diện.
 # sensitivity: pii | confidential  -> bị chặn với vai trò analyst (xem config/policies.yml)
 # =====================================================================================
+
+# Quy tắc lint SQL riêng của kho này (app/sqlcheck.py đọc mục này; kho khác khai báo theo bảng của mình)
+lint:
+  fanout:                 # cộng cột cấp ĐƠN sau khi JOIN bảng cấp DÒNG -> mỗi đơn bị cộng nhiều lần (lỗi, tự sửa)
+    - header: dw.fct_dh
+      measures: [tong_tt, tien_hang, tien_ck, phi_vc, so_dong]
+      line: dw.fct_ct_dh
+      hint: "Tổng hợp fct_dh riêng (hoặc dùng cột tt của fct_ct_dh) trước khi JOIN."
+      # biểu thức tương đương trên bảng cấp dòng để tự sửa ({line} = bí danh của bảng cấp dòng trong truy vấn)
+      line_equivalents: {tong_tt: "{line}.tt", tien_hang: "{line}.sl * {line}.dg", tien_ck: "{line}.ck"}
+  required_filters:       # tính tổng các cột này mà không nhắc tới cột trạng thái -> cảnh báo
+    - tables:
+        dw.fct_ct_dh: [tt, dg, sl, ck, tien_tra]
+        dw.fct_dh: [tong_tt, tien_hang, tien_ck]
+      column: trang_thai
+      message: "Tính tổng tiền bán hàng nhưng KHÔNG lọc trạng thái đơn — đang cộng cả đơn hủy/đang giao."
+      hint: "Theo semantic layer: doanh thu thuần chỉ tính trang_thai = 'HOAN_THANH'; doanh thu gộp loại trang_thai = 'HUY'."
+  semi_additive:          # chỉ số ảnh chụp: không cộng qua nhiều ngày chốt
+    - table: dw.fct_tk_tuan
+      measures: [sl_ton, gia_tri_ton, sl_dang_ve]
+      snapshot_column: ngay_chot
+      label: tồn kho
+
 tables:
   dw.fct_ct_dh:
     description: "Chi tiết đơn hàng — sự kiện bán hàng cấp DÒNG (mỗi dòng = 1 SKU trong 1 đơn). Bảng lớn nhất kho, phân vùng theo ngay_dh."

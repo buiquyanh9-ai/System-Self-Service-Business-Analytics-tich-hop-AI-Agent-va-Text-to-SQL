@@ -201,11 +201,11 @@ function sevIcon(sev) {
 }
 
 // ------------------------------------------------------------------ hiển thị câu trả lời
-const SRC_LABEL = { semantic: "Semantic layer", "semantic+repair": "Semantic + tự sửa", llm: "Claude sinh SQL", fewshot: "Few-shot đã xác nhận", user: "SQL người dùng", user_edit: "SQL đã chỉnh sửa" };
+const SRC_LABEL = { semantic: "Semantic layer", "semantic+repair": "Semantic + tự sửa", llm: "LLM sinh SQL", fewshot: "Few-shot đã xác nhận", user: "SQL người dùng", user_edit: "SQL đã chỉnh sửa" };
 
 function metaBadges(r) {
   const b = [];
-  b.push(h("span", { class: "badge" }, r.mode === "claude" ? "🤖 Claude" : "⚙️ Offline NLU"));
+  b.push(h("span", { class: "badge" }, r.mode === "claude" ? "🤖 Claude" : r.mode === "openrouter" ? "🤖 OpenRouter" : "⚙️ Offline NLU"));
   if (r.sql_source) b.push(h("span", { class: "badge info" }, SRC_LABEL[r.sql_source] || r.sql_source));
   if (r.cost && r.cost.human) b.push(h("span", { class: "badge " + (r.cost.level === "warn" ? "warn" : "") }, "Quét ~" + r.cost.human));
   if (r.audit) b.push(h("span", { class: "badge " + (r.audit.ok ? "ok" : "err"), title: "Mọi con số trong diễn giải được tái tính từ kết quả truy vấn" },
@@ -241,8 +241,8 @@ function detailTabs(r) {
       h("tbody", {}, r.lineage.map(l => h("tr", {}, h("td", {}, h("b", {}, l.column)), h("td", { class: "mono" }, l.sources.join("\n")), h("td", { class: "mono", style: { whiteSpace: "pre-line" } }, l.raw_sources.join("\n"))))))) },
     { label: "Pipeline agent", render: () => h("div", {}, h("div", { class: "steps" }, (r.trace || []).map((t, i) => [i ? h("span", { class: "muted" }, "→") : null, h("span", { class: "step" }, t.node, " ", h("span", { class: "ms" }, t.ms + "ms"))])),
       h("div", { class: "trace-list", style: { marginTop: "8px" } }, (r.trace || []).filter(t => t.detail).map(t => h("div", {}, h("b", {}, t.node + ": "), t.detail))),
-      (r.llm_trace || []).length ? h("div", { style: { marginTop: "8px" } }, h("b", {}, "Tool calls của Claude"), h("div", { class: "trace-list" }, r.llm_trace.map(t => h("div", {}, h("code", {}, t.tool), " ", JSON.stringify(t.input).slice(0, 160), " ", h("span", { class: "muted" }, t.ms + "ms"))))) : null) },
-    r.repairs && r.repairs.length && { label: "Tự sửa lỗi", render: () => h("div", {}, r.repairs.map(x => h("div", { class: "finding" }, h("div", {}, h("b", {}, "Lần " + x.attempt + " · " + (x.agent === "claude" ? "Claude" : "Rule-based") + ": "), x.fix),
+      (r.llm_trace || []).length ? h("div", { style: { marginTop: "8px" } }, h("b", {}, "Tool calls của LLM"), h("div", { class: "trace-list" }, r.llm_trace.map(t => h("div", {}, h("code", {}, t.tool), " ", JSON.stringify(t.input).slice(0, 160), " ", h("span", { class: "muted" }, t.ms + "ms"))))) : null) },
+    r.repairs && r.repairs.length && { label: "Tự sửa lỗi", render: () => h("div", {}, r.repairs.map(x => h("div", { class: "finding" }, h("div", {}, h("b", {}, "Lần " + x.attempt + " · " + (x.agent === "claude" ? "Claude" : x.agent === "openrouter" ? "OpenRouter" : "Rule-based") + ": "), x.fix),
       h("div", { class: "muted", style: { fontSize: "12.5px" } }, (x.error || {}).code + " — " + (x.error || {}).message), x.sql_after ? h("details", {}, h("summary", {}, "SQL trước / sau"), codeBlock(x.sql_before), h("div", { style: { height: "6px" } }), codeBlock(x.sql_after)) : null))) },
     r.audit && { label: "Kiểm chứng số liệu", render: () => h("div", {}, h("div", { class: "callout " + (r.audit.ok ? "ok" : "err") }, r.audit.ok ? `Tất cả ${r.audit.numbers_in_text} token số trong diễn giải đều thuộc ${r.audit.facts_checked} dữ kiện được tái tính từ kết quả truy vấn.` : "Có số không kiểm chứng được: " + r.audit.unverified_numbers.join(", ")),
       h("div", { class: "tbl-wrap", style: { marginTop: "8px" } }, h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, h("th", {}, "Dữ kiện"), h("th", {}, "Giá trị hiển thị"), h("th", {}, "Tái tính"), h("th", {}, "Khớp"))),
@@ -661,7 +661,7 @@ function viewEval() {
   const page = h("div", { class: "page" }, h("h2", {}, "Đánh giá độ chính xác (Execution Accuracy)"),
     h("p", { class: "sub" }, "Bộ câu hỏi mẫu kiểu Spider/BIRD (eval/questions.json) với SQL chuẩn. So khớp kết quả thực thi theo chuẩn Spider 2.0 (mọi cột gold phải có trong kết quả dự đoán). Tối ưu few-shot: học từ lỗi trên train, đo trên dev."));
   const split = h("select", {}, ["all", "train", "dev"].map(s => h("option", { value: s }, s)));
-  const mode = h("select", {}, h("option", { value: "" }, "theo cài đặt"), h("option", { value: "offline" }, "offline"), h("option", { value: "claude" }, "claude"));
+  const mode = h("select", {}, h("option", { value: "" }, "theo cài đặt"), h("option", { value: "offline" }, "offline"), h("option", { value: "claude" }, "claude"), h("option", { value: "openrouter" }, "openrouter"));
   const out = h("div", { style: { marginTop: "12px" } });
   const hist = h("div", {});
   const fsBox = h("div", {});
@@ -723,7 +723,7 @@ function viewSettings() {
   api("/api/admin/settings").then(d => {
     const s = d.settings;
     const f = {
-      llm_mode: h("select", {}, ["auto", "claude", "offline"].map(x => h("option", { value: x, selected: s.llm_mode === x }, x))),
+      llm_mode: h("select", {}, ["auto", "claude", "openrouter", "offline"].map(x => h("option", { value: x, selected: s.llm_mode === x }, x))),
       llm_model: h("input", { type: "text", value: s.llm_model }),
       llm_effort: h("select", {}, ["low", "medium", "high", "xhigh", "max"].map(x => h("option", { value: x, selected: s.llm_effort === x }, x))),
       always_review: h("input", { type: "checkbox", checked: s.always_review }),
@@ -733,10 +733,10 @@ function viewSettings() {
       fewshot_reuse_threshold: h("input", { type: "number", value: s.fewshot_reuse_threshold, min: 0.5, max: 1, step: 0.01 }),
       anchor_date: h("input", { type: "text", value: s.anchor_date || "", placeholder: "trống = ngày dữ liệu mới nhất" }),
     };
-    const lab = { llm_mode: "Chế độ LLM (auto = Claude nếu có API key)", llm_model: "Model Claude", llm_effort: "Effort (độ sâu suy luận)", always_review: "Luôn yêu cầu duyệt SQL trước khi chạy",
+    const lab = { llm_mode: "Chế độ LLM (auto = Claude hoặc OpenRouter nếu có API key)", llm_model: "Model (tên Claude, hoặc dạng nhà-cung-cấp/tên cho OpenRouter)", llm_effort: "Effort (độ sâu suy luận)", always_review: "Luôn yêu cầu duyệt SQL trước khi chạy",
       max_repair_attempts: "Số lần tự sửa SQL tối đa", query_timeout_s: "Timeout truy vấn (giây)", fewshot_k: "Số few-shot đưa vào prompt", fewshot_reuse_threshold: "Ngưỡng tái sử dụng SQL đã xác nhận (Jaccard)", anchor_date: "Ngày neo cho 'tháng này' (YYYY-MM-DD)" };
     page.append(h("div", { class: "card" }, h("div", { class: "bd" },
-      h("div", { class: "callout " + (d.credentials ? "ok" : "warn"), style: { marginTop: 0, marginBottom: "12px" } }, d.credentials ? "✓ Đã phát hiện thông tin xác thực Anthropic — có thể dùng Claude." : "Chưa có ANTHROPIC_API_KEY — hệ thống chạy bằng bộ hiểu tiếng Việt offline. Đặt biến môi trường ANTHROPIC_API_KEY rồi khởi động lại để bật Claude."),
+      h("div", { class: "callout " + (d.credentials ? "ok" : "warn"), style: { marginTop: 0, marginBottom: "12px" } }, d.credentials ? "✓ Đã phát hiện API key (Anthropic hoặc OpenRouter) — agent dùng LLM để hiểu câu hỏi." : "Chưa có API key — hệ thống chạy bằng bộ hiểu tiếng Việt offline. Đặt ANTHROPIC_API_KEY hoặc OPENROUTER_API_KEY trong file .env rồi khởi động lại để bật LLM."),
       Object.entries(f).map(([k, el]) => h("div", { class: "row", style: { marginBottom: "10px" } }, h("label", { style: { width: "340px" } }, lab[k]), el)),
       h("button", { class: "btn primary", onclick: async () => {
         const values = {}; for (const [k, el] of Object.entries(f)) values[k] = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) : (el.value || (k === "anchor_date" ? null : el.value));
@@ -763,9 +763,9 @@ function renderTop() {
   const u = S.user, c = S.cfg;
   const theme = document.documentElement.getAttribute("data-theme");
   t.replaceChildren(
-    h("div", { class: "brand" }, "📊 DATA-01", h("small", { class: "hide-sm" }, "AI Agent Text-to-SQL · Self-Service Analytics")),
+    h("div", { class: "brand" }, "📊 " + ((c.profile || {}).assistant || "DATA-01"), h("small", { class: "hide-sm" }, (c.profile || {}).company || "AI Agent Text-to-SQL · Self-Service Analytics")),
     h("span", { class: "spacer" }),
-    h("span", { class: "badge " + (c.mode === "claude" ? "ok" : "info"), title: "Chế độ sinh kế hoạch truy vấn" }, c.mode === "claude" ? "🤖 Claude · " + c.model : "⚙️ Offline NLU (chưa có API key)"),
+    h("span", { class: "badge " + (c.mode === "offline" ? "info" : "ok"), title: "Chế độ sinh kế hoạch truy vấn" }, c.mode === "claude" ? "🤖 Claude · " + c.model : c.mode === "openrouter" ? "🤖 OpenRouter · " + c.model : "⚙️ Offline NLU (chưa có API key)"),
     h("span", { class: "badge hide-sm" }, "Dữ liệu đến " + c.anchor),
     h("span", { class: "badge", title: u.full_name }, "👤 " + u.username + " · " + (u.role === "admin" ? "Admin" : "Analyst") + (u.rls && Object.keys(u.rls).length ? " · RLS " + JSON.stringify(u.rls) : "")),
     h("button", { class: "btn sm", title: "Đổi giao diện sáng/tối", onclick: () => {
@@ -799,9 +799,13 @@ async function boot() {
   renderNav(); renderView();
 }
 function logout() { S.token = null; S.user = null; S.conv = null; store.set("token", null); renderLogin(); }
-function renderLogin() {
-  const u = h("input", { type: "text", placeholder: "Tên đăng nhập", value: "analyst", style: { width: "100%" } });
-  const p = h("input", { type: "password", placeholder: "Mật khẩu", value: "analyst123", style: { width: "100%", marginTop: "8px" } });
+async function renderLogin() {
+  // doanh nghiệp đang phục vụ và tài khoản demo lấy từ máy chủ (mỗi workspace một bộ), không gắn cứng trong giao diện
+  let pub = { company: "", industry: "", assistant: "Trợ lý phân tích dữ liệu", demo_users: [] };
+  try { pub = await (await fetch("/api/public")).json(); } catch (e) { /* máy chủ cũ: dùng mặc định */ }
+  const first = (pub.demo_users || []).find(x => !x.rls && x.username !== "admin") || (pub.demo_users || [])[0] || {};
+  const u = h("input", { type: "text", placeholder: "Tên đăng nhập", value: first.username || "", style: { width: "100%" } });
+  const p = h("input", { type: "password", placeholder: "Mật khẩu", value: first.password || "", style: { width: "100%", marginTop: "8px" } });
   const err = h("div", {});
   const go = async (un, pw) => {
     try { const r = await api("/api/login", { body: { username: un, password: pw } }); S.token = r.token; store.set("token", r.token); boot(); }
@@ -810,13 +814,11 @@ function renderLogin() {
   p.onkeydown = e => { if (e.key === "Enter") go(u.value, p.value); };
   const q = (un, pw, title, desc) => h("button", { class: "btn", onclick: () => go(un, pw) }, h("b", {}, title), h("span", {}, desc));
   $("#app").replaceChildren(h("div", { class: "login" }, h("div", { class: "card" }, h("div", { class: "bd" },
-    h("h1", {}, "📊 DATA-01 · Trợ lý phân tích dữ liệu"),
-    h("div", { class: "sec" }, "AI Agent Text-to-SQL cho kho dữ liệu bán lẻ (dữ liệu giả lập). Đăng nhập bằng tài khoản demo:"),
+    h("h1", {}, "📊 " + (pub.assistant || "Trợ lý phân tích dữ liệu")),
+    h("div", { class: "sec" }, "Hỏi số liệu bằng tiếng Việt" + (pub.company ? " trên dữ liệu của " + pub.company : "") +
+      (pub.industry ? " (" + pub.industry + ")" : "") + "." + ((pub.demo_users || []).length ? " Dữ liệu giả lập, đăng nhập bằng tài khoản demo:" : "")),
     h("div", { style: { marginTop: "14px" } }, u, p, h("button", { class: "btn primary", style: { width: "100%", marginTop: "10px" }, onclick: () => go(u.value, p.value) }, "Đăng nhập")), err,
-    h("div", { class: "quick" },
-      q("admin", "admin123", "Admin", "Quản trị schema, DQ, eval"),
-      q("analyst", "analyst123", "Analyst", "Chỉ đọc · toàn quốc"),
-      q("analyst_bac", "analyst123", "Analyst Miền Bắc", "Chỉ đọc · RLS vùng B"),
-      q("analyst_nam", "analyst123", "Analyst Miền Nam", "Chỉ đọc · RLS vùng N"))))));
+    h("div", { class: "quick" }, (pub.demo_users || []).map(x =>
+      q(x.username, x.password, x.full_name, x.role_label + (x.rls ? " · chỉ thấy " + x.rls : ""))))))));
 }
 boot();

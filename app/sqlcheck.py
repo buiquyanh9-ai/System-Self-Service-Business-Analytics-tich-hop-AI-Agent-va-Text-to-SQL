@@ -11,13 +11,18 @@ from sqlglot import exp
 from sqlglot.lineage import lineage as sg_lineage
 from sqlglot.optimizer.scope import traverse_scope
 
-from . import config
+from . import config, profile
 from .catalog import get_catalog
 
-HEADER_MEASURES = {"dw.fct_dh": {"tong_tt", "tien_hang", "tien_ck", "phi_vc", "so_dong"}}
-LINE_TABLES = {"dw.fct_ct_dh"}
-SALES_TABLES = {"dw.fct_ct_dh": {"tt", "dg", "sl", "ck", "tien_tra"}, "dw.fct_dh": {"tong_tt", "tien_hang", "tien_ck"}}
-SEMI_ADDITIVE = {"dw.fct_tk_tuan": {"sl_ton", "gia_tri_ton", "sl_dang_ve"}}
+def lint_rules() -> dict:
+    """Quy tắc lint riêng của kho dữ liệu đang nạp (catalog.yml: lint). Doanh nghiệp không khai báo thì bỏ qua nhóm đó.
+
+      fanout:           cộng cột cấp cha sau khi JOIN bảng cấp con (nhân bản số liệu)
+      required_filters: tính tổng các cột tiền/số lượng mà không lọc một cột trạng thái
+      semi_additive:    cộng chỉ số ảnh chụp (tồn kho, số dư) qua nhiều ngày chốt
+    """
+    r = config.catalog_yaml().get("lint") or {}
+    return {k: list(r.get(k) or []) for k in ("fanout", "required_filters", "semi_additive")}
 
 
 def _src_fq(scope, alias):
@@ -40,6 +45,8 @@ def lint(v, known_issues: list[dict] | None = None, date_range: tuple | None = N
     if q is None:
         return out
     cat = get_catalog()
+    rules = lint_rules()
+    schema = profile.serving_schema()
 
     # L001 SELECT *
     for s in tree.find_all(exp.Select):
@@ -79,48 +86,41 @@ def lint(v, known_issues: list[dict] | None = None, date_range: tuple | None = N
                                                f"{fn.sql()[:50]} — không cắt được phân vùng, phải quét toàn bảng.",
                                     "hint": f"Viết dạng khoảng: {part['column']} >= DATE 'YYYY-MM-DD' AND {part['column']} < DATE 'YYYY-MM-DD'."})
                         break
-        # L004 fan-out: SUM cột cấp đơn khi join với bảng cấp dòng
-        if fqs & LINE_TABLES and fqs & set(HEADER_MEASURES):
+        # L004 fan-out: SUM cột cấp cha (vd cấp đơn) khi join với bảng cấp con (vd cấp dòng)
+        for fo in rules["fanout"]:
+            if fo["line"] not in fqs or fo["header"] not in fqs:
+                continue
             for agg in sel.find_all(*agg_types):
                 for c in agg.find_all(exp.Column):
-                    fq = tables.get(c.table)
-                    if fq in HEADER_MEASURES and c.name in HEADER_MEASURES[fq]:
+                    if tables.get(c.table) == fo["header"] and c.name in fo["measures"]:
                         out.append({"code": "L004", "severity": "error",
-                                    "message": f"Nhân bản số liệu (fan-out): {agg.sql()[:60]} cộng cột cấp ĐƠN ({fq}.{c.name}) "
+                                    "message": f"Nhân bản số liệu (fan-out): {agg.sql()[:60]} cộng cột cấp ĐƠN ({fo['header']}.{c.name}) "
                                                f"sau khi JOIN với bảng cấp DÒNG — mỗi đơn bị cộng nhiều lần.",
-                                    "hint": "Tổng hợp fct_dh riêng (hoặc dùng cột tt của fct_ct_dh) trước khi JOIN."})
+                                    "hint": fo.get("hint") or f"Tổng hợp {fo['header']} riêng trước khi JOIN."})
                         break
-        # L006 thiếu lọc trạng thái đơn khi tính doanh thu
-        sales_aggs = []
-        for agg in sel.find_all(*agg_types):
-            for c in agg.find_all(exp.Column):
-                fq = tables.get(c.table)
-                if fq in SALES_TABLES and c.name in SALES_TABLES[fq]:
-                    sales_aggs.append(agg)
-                    break
-        if sales_aggs:
-            has_status = any(c.name == "trang_thai" for c in sel.find_all(exp.Column)) or \
-                any(c.name == "trang_thai" for c in sel.find_all(exp.Column) if c.table in tables)
-            if not has_status:
-                out.append({"code": "L006", "severity": "warning",
-                            "message": "Tính tổng tiền bán hàng nhưng KHÔNG lọc trạng thái đơn — đang cộng cả đơn hủy/đang giao.",
-                            "hint": "Theo semantic layer: doanh thu thuần chỉ tính trang_thai = 'HOAN_THANH'; doanh thu gộp loại trang_thai = 'HUY'."})
+        # L006 tính tổng tiền/số lượng mà thiếu lọc cột trạng thái bắt buộc
+        for rf in rules["required_filters"]:
+            hit = any(c.name in (rf["tables"].get(tables.get(c.table)) or [])
+                      for agg in sel.find_all(*agg_types) for c in agg.find_all(exp.Column))
+            if hit and not any(c.name == rf["column"] for c in sel.find_all(exp.Column)):
+                out.append({"code": "L006", "severity": "warning", "message": rf["message"], "hint": rf.get("hint", "")})
         # L007 chỉ số semi-additive bị cộng qua thời gian
-        for agg in sel.find_all(exp.Sum):
-            for c in agg.find_all(exp.Column):
-                fq = tables.get(c.table)
-                if fq in SEMI_ADDITIVE and c.name in SEMI_ADDITIVE[fq]:
-                    grp = sel.args.get("group")
-                    grouped = grp is not None and any(isinstance(g, exp.Column) and g.name == "ngay_chot" for g in grp.expressions)
-                    filtered = where is not None and any(
-                        isinstance(x, exp.EQ) and any(isinstance(y, exp.Column) and y.name == "ngay_chot" for y in x.find_all(exp.Column))
-                        or isinstance(x, exp.In) and isinstance(x.this, exp.Column) and x.this.name == "ngay_chot"
-                        for x in where.find_all(exp.EQ, exp.In))
-                    if not grouped and not filtered:
-                        out.append({"code": "L007", "severity": "warning",
-                                    "message": f"{agg.sql()[:50]}: tồn kho là chỉ số semi-additive, cộng qua nhiều ngày chốt sẽ sai.",
-                                    "hint": "Lọc 1 ngày chốt (vd ngay_chot = (SELECT MAX(ngay_chot) ...)) hoặc GROUP BY ngay_chot."})
-                    break
+        for sa in rules["semi_additive"]:
+            snap = sa["snapshot_column"]
+            for agg in sel.find_all(exp.Sum):
+                if not any(tables.get(c.table) == sa["table"] and c.name in sa["measures"] for c in agg.find_all(exp.Column)):
+                    continue
+                grp = sel.args.get("group")
+                grouped = grp is not None and any(isinstance(g, exp.Column) and g.name == snap for g in grp.expressions)
+                filtered = where is not None and any(
+                    isinstance(x, exp.EQ) and any(isinstance(y, exp.Column) and y.name == snap for y in x.find_all(exp.Column))
+                    or isinstance(x, exp.In) and isinstance(x.this, exp.Column) and x.this.name == snap
+                    for x in where.find_all(exp.EQ, exp.In))
+                if not grouped and not filtered:
+                    out.append({"code": "L007", "severity": "warning",
+                                "message": f"{agg.sql()[:50]}: {sa.get('label', 'chỉ số này')} là chỉ số semi-additive, "
+                                           "cộng qua nhiều ngày chốt sẽ sai.",
+                                "hint": f"Lọc 1 ngày chốt (vd {snap} = (SELECT MAX({snap}) ...)) hoặc GROUP BY {snap}."})
         # L005 chia không NULLIF
         for d in sel.find_all(exp.Div):
             r = d.expression
@@ -129,11 +129,11 @@ def lint(v, known_issues: list[dict] | None = None, date_range: tuple | None = N
                             "hint": "Bọc mẫu số bằng NULLIF(x, 0)."})
                 break
     # L008 tầng raw/stg
-    lower = [t for t in v.tables if not t.startswith("dw.")]
+    lower = [t for t in v.tables if not t.startswith(schema + ".")]
     if lower:
         out.append({"code": "L008", "severity": "info",
                     "message": f"Truy vấn tầng chưa làm sạch: {', '.join(lower)}.",
-                    "hint": "Báo cáo nghiệp vụ nên dùng tầng dw để thống nhất định nghĩa."})
+                    "hint": f"Báo cáo nghiệp vụ nên dùng tầng {schema} để thống nhất định nghĩa."})
     # L010 vấn đề chất lượng dữ liệu đã biết
     for iss in known_issues or []:
         if iss["table"] in v.tables:

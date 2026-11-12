@@ -1,6 +1,7 @@
 """Data catalog hợp nhất: thống kê kỹ thuật (từ build) + mô tả nghiệp vụ (catalog.yml) + chỉnh sửa của Admin."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import threading
 
@@ -56,12 +57,13 @@ class Catalog:
         return self.tables.get(fq.lower())
 
     def resolve(self, name: str) -> str | None:
-        """Tên bảng (có/không schema) -> fq. Bảng không có schema mặc định thuộc dw."""
+        """Tên bảng (có/không schema) -> fq. Bảng không có schema mặc định thuộc schema phục vụ của doanh nghiệp."""
+        from .profile import serving_schema
         name = name.lower().strip('"')
         if name in self.tables:
             return name
-        if "." not in name and f"dw.{name}" in self.tables:
-            return f"dw.{name}"
+        if "." not in name and f"{serving_schema()}.{name}" in self.tables:
+            return f"{serving_schema()}.{name}"
         return None
 
     def sqlglot_schema(self, schemas: list[str] | None = None) -> dict:
@@ -86,10 +88,26 @@ class Catalog:
         s = get_store().get_settings().get("anchor_date")
         if s:
             return s
-        t = self.get("dw.fct_ct_dh")
-        if t and t["columns"].get("ngay_dh", {}).get("max"):
-            return str(t["columns"]["ngay_dh"]["max"])[:10]
-        return str(self.meta.get("ngay_ket_thuc", "2026-11-09"))[:10]
+        from .profile import anchor, serving_schema      # cột mốc thời gian khai báo trong hồ sơ doanh nghiệp
+        tab, col = anchor() or (None, None)
+        t = self.get(tab) if tab else None
+        if t and t["columns"].get(col, {}).get("max"):
+            return str(t["columns"][col]["max"])[:10]
+        if self.meta.get("ngay_ket_thuc"):
+            return str(self.meta["ngay_ket_thuc"])[:10]
+        # hồ sơ chưa khai báo mốc: lấy ngày mới nhất trên cột phân vùng của các bảng trong schema phục vụ
+        latest = [str(t["columns"][t["partition"]["column"]]["max"])[:10] for t in self.tables.values()
+                  if t["schema"] == serving_schema() and t.get("partition") and t["columns"][t["partition"]["column"]].get("max")]
+        return max(latest) if latest else dt.date.today().isoformat()
+
+    def data_start(self) -> str:
+        """Ngày dữ liệu sớm nhất (theo cột mốc trong hồ sơ doanh nghiệp)."""
+        from .profile import anchor
+        tab, col = anchor() or (None, None)
+        t = self.get(tab) if tab else None
+        if t and t["columns"].get(col, {}).get("min"):
+            return str(t["columns"][col]["min"])[:10]
+        return str(self.meta.get("ngay_bat_dau", "2000-01-01"))[:10]
 
     def describe(self, fq: str, role_cfg: dict | None = None, max_values: int = 12) -> dict:
         t = self.get(fq)

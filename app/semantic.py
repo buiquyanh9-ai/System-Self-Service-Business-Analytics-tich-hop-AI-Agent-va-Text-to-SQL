@@ -19,7 +19,9 @@ import re
 
 from . import config
 from .catalog import get_catalog
+from .textutil import norm
 
+VALUE_LIST_CAP = 400          # thống kê catalog chỉ lưu tối đa từng này giá trị phân biệt cho mỗi cột
 TIME_GRAINS = ["day", "week", "month", "quarter", "year"]
 GRAIN_OF_DIM = {"ngay": "day", "tuan": "week", "thang": "month", "quy": "quarter", "nam": "year"}
 OPS = {"in": "IN", "not_in": "NOT IN", "eq": "=", "neq": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<=",
@@ -104,19 +106,26 @@ class Semantic:
             return time_expr(d["grain"], self.models[model]["time_column"])
         return (d.get("expr_by_model") or {}).get(model, d["expr"])
 
-    def dim_values(self, dim: str) -> list[str]:
+    def dim_column(self, dim: str) -> tuple[str, str] | None:
+        """Bảng và cột vật lý đứng sau một chiều phân tích (None với chiều thời gian hoặc biểu thức không phải cột đơn)."""
         d = self.dims.get(dim, {})
-        if d.get("kind") == "time" or not d.get("expr"):
-            return []
+        if d.get("kind") == "time" or not re.fullmatch(r"\w+\.\w+", d.get("expr") or ""):
+            return None
         alias, col = d["expr"].split(".")
         for mdl in self.models.values():
-            j = mdl["joins"].get(alias)
+            j = (mdl.get("joins") or {}).get(alias)
             table = j["table"] if j else (mdl["table"] if mdl["alias"] == alias else None)
             if table:
                 t = get_catalog().get(table)
                 if t and col in t["columns"]:
-                    return t["columns"][col].get("values", []) or []
-        return []
+                    return table, col
+        return None
+
+    def dim_values(self, dim: str) -> list[str]:
+        loc = self.dim_column(dim)
+        if not loc:
+            return []
+        return get_catalog().get(loc[0])["columns"][loc[1]].get("values", []) or []
 
     # ------------------------------------------------------------------ biên dịch 1 model
     def _model_query(self, model: str, metric_names: list[str], dims: list[str], filters: list[dict],
@@ -269,19 +278,83 @@ class Semantic:
 
     # ------------------------------------------------------------------ biên dịch plan
     def validate_plan(self, plan: dict) -> dict:
+        """Chuẩn hóa và kiểm tra plan (plan do LLM lập hay sai kiểu: chuỗi thay cho danh sách, giá trị lọc sai chính tả)."""
+        if not isinstance(plan, dict):
+            raise SemanticError("Plan phải là một object JSON.")
         p = dict(plan)
-        p["metrics"] = [m for m in (p.get("metrics") or []) if m]
-        p["dimensions"] = [d for d in (p.get("dimensions") or []) if d]
-        p["filters"] = [f for f in (p.get("filters") or []) if f and f.get("dimension")]
+        as_list = lambda v: [v] if isinstance(v, (str, int, float)) else list(v or [])
+        p["metrics"] = [m for m in as_list(p.get("metrics")) if m]
+        p["dimensions"] = [d for d in as_list(p.get("dimensions")) if d]
+        filters = []
+        for f in as_list(p.get("filters")) if not isinstance(p.get("filters"), dict) else [p["filters"]]:
+            if not isinstance(f, dict) or not f.get("dimension"):
+                continue
+            f = dict(f)
+            f["values"] = as_list(f["values"] if f.get("values") is not None else f.pop("value", None))
+            filters.append(f)
+        p["filters"] = filters
         if not p["metrics"]:
             raise SemanticError("Chưa xác định được chỉ số cần tính.")
         for m in p["metrics"]:
             if m not in self.metrics:
-                raise SemanticError(f"Chỉ số '{m}' không có trong semantic layer.")
+                raise SemanticError(f"Chỉ số '{m}' không có trong semantic layer. Chỉ số hiện có: {', '.join(self.metrics)}.")
         for d in p["dimensions"] + [f["dimension"] for f in p["filters"]]:
             if d not in self.dims:
-                raise SemanticError(f"Chiều phân tích '{d}' không có trong semantic layer.")
+                raise SemanticError(f"Chiều phân tích '{d}' không có trong semantic layer. Chiều hiện có: {', '.join(self.dims)}.")
+        for f in p["filters"]:
+            if self.dims[f["dimension"]].get("kind") == "time":
+                raise SemanticError(f"Không lọc theo chiều thời gian '{f['dimension']}'. Khoảng thời gian đặt ở time_range "
+                                    "{\"start\": \"YYYY-MM-DD\", \"end\": \"YYYY-MM-DD\"} (end không bao gồm).")
+            self._canonical_values(f)
+        for key in ("time_range", "compare"):
+            p[key] = self._check_period(p.get(key), key)
+        as_dicts = lambda v: [x for x in ([v] if isinstance(v, dict) else list(v or [])) if isinstance(x, dict)]
+        p["order_by"] = [o for o in as_dicts(p.get("order_by")) if o.get("field")]
+        p["having"] = as_dicts(p.get("having"))
+        for h in p["having"]:
+            if h.get("metric") not in self.metrics or not isinstance(h.get("value"), (int, float)):
+                raise SemanticError('Mỗi điều kiện having có dạng {"metric": <tên chỉ số>, "op": ">", "value": <số>}.')
+        if p.get("limit") is not None:
+            try:
+                p["limit"] = int(p["limit"])
+            except (TypeError, ValueError):
+                raise SemanticError("limit phải là số nguyên.")
         return p
+
+    def _canonical_values(self, f: dict) -> None:
+        """Đưa giá trị lọc về đúng chính tả trong kho; giá trị không tồn tại thì báo lỗi thay vì âm thầm trả kết quả rỗng."""
+        if OPS.get(f.get("op", "in"), "IN") not in ("IN", "NOT IN", "=", "<>"):
+            return
+        known = self.dim_values(f["dimension"])
+        if not known or len(known) >= VALUE_LIST_CAP:       # không có danh mục, hoặc danh mục bị cắt bớt -> không kiểm
+            return
+        by_norm = {norm(str(v)): v for v in known}
+        out, bad = [], []
+        for v in f["values"]:
+            hit = v if v in known else by_norm.get(norm(str(v)))
+            (out if hit is not None else bad).append(hit if hit is not None else v)
+        if bad:
+            label = self.dims[f["dimension"]].get("label", f["dimension"])
+            raise SemanticError(f"Giá trị {bad} không có trong chiều '{label}'. Giá trị hợp lệ: "
+                                f"{', '.join(map(str, known[:40]))}{'...' if len(known) > 40 else ''}.")
+        f["values"] = out
+
+    @staticmethod
+    def _check_period(tr, name: str) -> dict | None:
+        if not tr:
+            return None
+        if not isinstance(tr, dict):
+            raise SemanticError(f"{name} phải là object có start và end dạng YYYY-MM-DD.")
+        out = dict(tr)
+        try:
+            for k in ("start", "end"):
+                if out.get(k):
+                    out[k] = dt.date.fromisoformat(str(out[k])[:10]).isoformat()
+        except ValueError:
+            raise SemanticError(f"{name} phải có start và end dạng YYYY-MM-DD (end không bao gồm).")
+        if out.get("start") and out.get("end") and out["end"] <= out["start"]:
+            raise SemanticError(f"{name}: end phải sau start (end không bao gồm).")
+        return out
 
     def compile(self, plan: dict) -> dict:
         p = self.validate_plan(plan)

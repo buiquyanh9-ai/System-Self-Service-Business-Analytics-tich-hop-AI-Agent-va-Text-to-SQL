@@ -8,8 +8,9 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from functools import lru_cache
 
-from . import config
+from . import config, profile
 from .catalog import get_catalog
 from .semantic import get_semantic
 from .store import get_store
@@ -60,7 +61,7 @@ class Retriever:
         cat, sem = get_catalog(), get_semantic()
         docs = []
         for fq, t in cat.tables.items():
-            if t["schema"] not in ("dw",):
+            if t["schema"] != profile.serving_schema():
                 continue
             parts = [fq, t["table"].replace("_", " "), t["description"], " ".join(t["synonyms"])]
             for c in t["columns"].values():
@@ -70,6 +71,7 @@ class Retriever:
             docs.append({"kind": "metric", "id": name,
                          "text": " ".join([name.replace("_", " "), m["label"], m.get("description", ""), " ".join(m.get("synonyms", []))])})
         self.schema_index = BM25(docs)
+        _slots.cache_clear()            # danh mục giá trị có thể vừa đổi
         self.reload_fewshots()
 
     def reload_fewshots(self):
@@ -81,9 +83,8 @@ class Retriever:
         hits = self.schema_index.search(query, k=k * 2)
         tables = [h[1]["id"] for h in hits if h[1]["kind"] == "table"][:k]
         metrics = [h[1]["id"] for h in hits if h[1]["kind"] == "metric"][:k]
-        # luôn kèm các dimension liên quan đến bảng sự kiện được chọn
-        core = ["dw.fct_ct_dh", "dw.dim_sp", "dw.dim_cn", "dw.dim_vung", "dw.dim_kenh", "dw.dim_nh"]
-        for c in core:
+        # luôn kèm các bảng cốt lõi của doanh nghiệp (khai báo ở profile.yml: warehouse.core_tables)
+        for c in profile.core_tables():
             if len(tables) < k + 3 and c not in tables:
                 tables.append(c)
         return {"tables": tables, "metrics": metrics, "scores": [(round(s, 2), d["kind"], d["id"]) for s, d in hits]}
@@ -112,12 +113,16 @@ class Retriever:
         return dict(best[1], similarity=round(best[0], 3)) if best else None
 
 
+@lru_cache(maxsize=4096)
 def _slots(q: str) -> tuple:
+    """Các 'ô' làm đổi nghĩa câu hỏi dù chữ gần giống: con số, kỳ tương đối, giá trị lọc (tên miền, ngành hàng...)."""
+    from .nlu import get_nlu
     n = norm(q)
     nums = tuple(sorted(re.findall(r"\d+", n)))
     rel = tuple(sorted(w for w in ("thang nay", "thang truoc", "nam nay", "nam ngoai", "quy nay", "quy truoc", "hom nay",
-                                    "hom qua", "tuan nay", "tuan truoc", "mien bac", "mien nam", "mien trung") if w in n))
-    return nums + rel
+                                    "hom qua", "tuan nay", "tuan truoc") if w in n))
+    vals = tuple(sorted({v["value"] for v in get_nlu().parse(q).matched.get("values", [])}))
+    return nums + rel + vals
 
 
 _r: Retriever | None = None

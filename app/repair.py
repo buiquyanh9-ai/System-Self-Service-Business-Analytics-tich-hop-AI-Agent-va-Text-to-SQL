@@ -16,6 +16,7 @@ import sqlglot
 from sqlglot import exp
 
 from .catalog import get_catalog
+from .profile import serving_schema
 from .textutil import norm
 
 D = "duckdb"
@@ -65,18 +66,19 @@ def rule_repair(sql: str, error: dict, tables: list[str]) -> tuple[str | None, s
         return None, "Không tìm được cột thay thế."
     if code == "UNKNOWN_TABLE":
         t, sug = error.get("table"), error.get("suggestion")
+        sch = serving_schema()
         if t and not sug:
             name = t.split(".")[-1]
-            cands = [x for x in cat.tables if x.startswith("dw.")]
-            m = difflib.get_close_matches(f"dw.{name}", cands, n=1, cutoff=0.4)
+            cands = [x for x in cat.tables if x.startswith(sch + ".")]
+            m = difflib.get_close_matches(f"{sch}.{name}", cands, n=1, cutoff=0.4)
             sug = m[0] if m else None
-        if t and sug and sug.startswith("dw."):
+        if t and sug and sug.startswith(sch + "."):
             for tb in tree.find_all(exp.Table):
-                if f"{tb.db or 'dw'}.{tb.name}".lower() == t:
+                if f"{tb.db or sch}.{tb.name}".lower() == t:
                     tb.set("this", exp.to_identifier(sug.split(".")[1]))
-                    tb.set("db", exp.to_identifier("dw"))
+                    tb.set("db", exp.to_identifier(sch))
             return tree.sql(dialect=D, pretty=True), f"Đổi bảng {t} → {sug}."
-        return None, "Không tìm được bảng thay thế trong tầng dw."
+        return None, f"Không tìm được bảng thay thế trong tầng {sch}."
     if code == "BINDER":
         raw = error.get("raw") or error.get("message", "")
         m = re.search(r'Referenced column "([^"]+)" not found.*?Candidate bindings: "([^"]+)"', raw, re.S)
@@ -112,22 +114,22 @@ def rule_repair(sql: str, error: dict, tables: list[str]) -> tuple[str | None, s
             return tree.sql(dialect=D, pretty=True), "Bọc mẫu số bằng NULLIF(…, 0)."
         return None, "Lỗi engine chưa có quy tắc sửa tự động."
     if code == "L004":
-        # SUM(cột cấp đơn) sau khi join cấp dòng -> dùng cột tương đương của fct_ct_dh
-        line_alias = None
-        for tb in tree.find_all(exp.Table):
-            if tb.name == "fct_ct_dh":
-                line_alias = tb.alias_or_name
-        if not line_alias:
-            return None, "Không xác định được bảng cấp dòng."
-        mapping = {"tong_tt": f"{line_alias}.tt", "tien_hang": f"{line_alias}.sl * {line_alias}.dg", "tien_ck": f"{line_alias}.ck"}
+        # SUM(cột cấp đơn) sau khi join cấp dòng -> dùng biểu thức tương đương trên bảng cấp dòng (catalog.yml: lint.fanout)
+        from .sqlcheck import lint_rules
         changed = False
-        for agg in tree.find_all(exp.Sum):
-            for c in agg.find_all(exp.Column):
-                if c.name in mapping:
-                    c.replace(sqlglot.parse_one(f"({mapping[c.name]})", read=D))
-                    changed = True
+        for fo in lint_rules()["fanout"]:
+            line_alias = next((tb.alias_or_name for tb in tree.find_all(exp.Table)
+                               if f"{tb.db or serving_schema()}.{tb.name}".lower() == fo["line"]), None)
+            mapping = {k: v.replace("{line}", line_alias or "") for k, v in (fo.get("line_equivalents") or {}).items()}
+            if not line_alias or not mapping:
+                continue
+            for agg in tree.find_all(exp.Sum):
+                for c in agg.find_all(exp.Column):
+                    if c.name in mapping:
+                        c.replace(sqlglot.parse_one(f"({mapping[c.name]})", read=D))
+                        changed = True
         if changed:
-            return tree.sql(dialect=D, pretty=True), "Sửa fan-out: thay cột cấp đơn bằng cột cấp dòng tương ứng (tt / sl*dg / ck)."
+            return tree.sql(dialect=D, pretty=True), "Sửa fan-out: thay cột cấp đơn bằng biểu thức cấp dòng tương ứng."
         return None, "Không sửa được fan-out tự động."
     return None, "Chưa có quy tắc sửa cho lỗi này."
 

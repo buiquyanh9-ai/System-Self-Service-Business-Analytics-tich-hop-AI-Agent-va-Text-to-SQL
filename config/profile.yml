@@ -1,0 +1,56 @@
+# =====================================================================================
+# HỒ SƠ DOANH NGHIỆP — mô tả doanh nghiệp đang dùng hệ thống.
+# Bộ file cấu hình (profile + catalog + semantic_layer + policies) quyết định hệ thống trả lời
+# theo đặc trưng của doanh nghiệp nào. Đổi bộ file này là đổi doanh nghiệp, không sửa mã.
+# Lời tự giới thiệu của trợ lý được dựng bằng code từ file này và semantic layer.
+# =====================================================================================
+version: 1
+
+company:
+  name: Công ty CP Bán lẻ Điện máy ABC
+  short_name: ABC
+  industry: bán lẻ điện máy
+  description: Chuỗi bán lẻ điện máy đa kênh tại Việt Nam, bán qua cửa hàng, website, ứng dụng di động và sàn thương mại điện tử.
+
+assistant:
+  name: Trợ lý dữ liệu ABC
+  language: Vietnamese
+
+warehouse:
+  engine: DuckDB
+  schema: dw
+  schema_note: "cleaned marts: fct_* facts and dim_* dimensions; column names are Vietnamese abbreviations — always check descriptions"
+  # Cột ngày dùng để xác định "ngày dữ liệu mới nhất" (mốc cho "tháng này", "tháng trước"...)
+  anchor: {table: dw.fct_ct_dh, column: ngay_dh}
+  # Bảng luôn kèm vào kết quả tìm schema cho LLM
+  core_tables: [dw.fct_ct_dh, dw.dim_sp, dw.dim_cn, dw.dim_vung, dw.dim_kenh, dw.dim_nh]
+  # Quy ước riêng của kho dữ liệu này, đưa nguyên văn vào prompt của LLM (viết bằng tiếng Anh cho mô hình dễ tuân thủ)
+  notes:
+    - "Time filters go on partition columns, e.g. f.ngay_dh >= DATE 'YYYY-MM-DD' AND f.ngay_dh < DATE 'YYYY-MM-DD' on dw.fct_ct_dh."
+    - "Do NOT join dw.fct_dh with dw.fct_ct_dh and then SUM header columns (fan-out)."
+    - "Inventory (dw.fct_tk_tuan) is semi-additive — pick one ngay_chot per period."
+    - "'doanh thu' without gộp/thuần is ambiguous (doanh_thu_gop vs doanh_thu_thuan differ) — clarify unless the conversation has a stored preference."
+
+# Gói kiểm tra theo ngành viết bằng code: kiểm định chất lượng dữ liệu nguồn POS/ERP và các nguyên nhân gốc của
+# bán lẻ (lệch đơn vị giá, đóng cửa hàng, hết hàng, lịch khuyến mãi). Doanh nghiệp khác bỏ dòng này: hệ thống
+# vẫn chạy phần kiểm tra tổng quát dựng từ catalog và semantic layer.
+domain_pack: retail_abc
+
+# Việc trợ lý không làm; hiện trong lời tự giới thiệu
+out_of_scope:
+  - dự báo tương lai hay khuyến nghị đầu tư
+  - sửa, xóa dữ liệu (chỉ đọc)
+  - trả dữ liệu cá nhân hoặc cột bị hạn chế theo vai trò của bạn
+  - câu hỏi ngoài dữ liệu của doanh nghiệp
+
+sample_questions:
+  - Doanh thu thuần theo tháng năm 2026
+  - Top 5 cửa hàng có doanh thu thuần cao nhất tháng 10/2026
+  - Doanh thu tháng trước theo miền
+  - Vì sao doanh thu thuần tháng 9/2026 giảm so với cùng kỳ?
+  - Tỷ lệ đạt kế hoạch doanh thu theo miền tháng 10/2026
+  - Tồn kho điện thoại tại kho Đà Nẵng theo tuần từ tháng 4 đến tháng 7 năm 2026
+  - Sản phẩm bán chạy nhất 3 tháng gần nhất
+  - Doanh thu gộp quý 3 năm 2026 so với cùng kỳ theo ngành hàng
+  - Tỷ lệ hủy đơn theo kênh năm nay
+  - Doanh thu thuần là gì?

@@ -6,6 +6,7 @@ Cắt phân vùng (partition pruning) chỉ áp dụng khi điều kiện lọc 
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
@@ -122,14 +123,16 @@ def estimate(qualified, rls_tables: list[str] | None = None) -> dict:
                           "partition_filter": [str(pr[0]) if pr[0] else None, str(pr[1]) if pr[1] else None] if pr else None,
                           "pruned_pct": round(100 * (1 - rows / t["rows"]), 1) if t["rows"] and part else 0.0,
                           "bytes": b, "large": t["rows"] >= large_rows})
-    # chi phí phụ của RLS (tra cứu bảng dim nhỏ)
+    # chi phí phụ của RLS: vị từ RLS dạng "... IN (SELECT ... FROM <bảng tra cứu> ...)" phải quét thêm bảng tra cứu đó
+    rls_rules = config.policies().get("rls") or {}
     for fq in rls_tables or []:
-        lookup = "dw.dim_kho" if fq in ("dw.fct_tk_tuan", "dw.fct_nk", "dw.dim_kho") else "dw.dim_cn"
-        t = cat.get(lookup)
-        if t:
-            items.append({"table": lookup, "alias": f"rls:{fq}", "columns": ["ma_vung"], "rows_total": t["rows"],
-                          "rows_scanned": t["rows"], "partition_column": None, "partition_filter": None,
-                          "pruned_pct": 0.0, "bytes": int(t["rows"] * 12), "large": False})
+        lookups = {m.lower() for rule in rls_rules.values() for m in re.findall(r"\bFROM\s+([\w.]+)", rule.get(fq) or "", re.I)}
+        for lookup in sorted(lookups):
+            t = cat.get(lookup)
+            if t:
+                items.append({"table": lookup, "alias": f"rls:{fq}", "columns": [], "rows_total": t["rows"],
+                              "rows_scanned": t["rows"], "partition_column": None, "partition_filter": None,
+                              "pruned_pct": 0.0, "bytes": int(t["rows"] * 12), "large": False})
     total = sum(i["bytes"] for i in items)
     large = sorted({i["table"] for i in items if i["large"]})
     return {"total_bytes": total, "human": human_bytes(total), "tables": items, "large_tables": large}

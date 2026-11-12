@@ -18,43 +18,25 @@ from .catalog import get_catalog
 from .semantic import get_semantic
 from .textutil import norm
 
-DIM_PRIORITY = ["vung", "nganh_hang", "nhom_kenh", "kenh", "tinh_tp", "chi_nhanh", "kho", "thuong_hieu", "hang_tv",
-                "khuyen_mai", "pttt", "ly_do_tra", "loai_ch", "gioi_tinh", "ncc", "nhom_sp", "san_pham", "tinh_kh"]
-EXTRA_VALUE_ALIASES = {
-    "vung": {"Miền Bắc": ["mien bac", "phia bac", "ngoai bac", "khu vuc phia bac", "khu vuc mien bac"],
-             "Miền Trung": ["mien trung", "khu vuc mien trung", "phia trung"],
-             "Miền Nam": ["mien nam", "phia nam", "trong nam", "khu vuc phia nam", "khu vuc mien nam"]},
-    "kenh": {"Tại cửa hàng": ["tai cua hang", "kenh cua hang", "mua truc tiep", "ban truc tiep"],
-             "Website": ["website", "web", "trang web"],
-             "Ứng dụng di động": ["app", "ung dung", "mobile app", "ung dung di dong"],
-             "Sàn TMĐT": ["san tmdt", "san thuong mai dien tu", "shopee", "lazada", "tiki", "marketplace"]},
-    "nhom_kenh": {"Online": ["online", "truc tuyen", "kenh online"], "Offline": ["offline", "kenh offline"]},
-    "nganh_hang": {"Điện thoại": ["dien thoai", "smartphone", "dien thoai di dong"],
-                   "Laptop": ["laptop", "may tinh xach tay", "notebook"],
-                   "Máy tính bảng": ["may tinh bang", "tablet"],
-                   "Đồng hồ thông minh": ["dong ho thong minh", "smartwatch", "dong ho"],
-                   "Tivi": ["tivi", "ti vi", "tv"], "Âm thanh": ["am thanh", "thiet bi am thanh"],
-                   "Gia dụng": ["gia dung", "do gia dung"], "Điện lạnh": ["dien lanh"], "Phụ kiện": ["phu kien"]},
-    "hang_tv": {"Kim cương": ["kim cuong", "hang kim cuong", "the kim cuong"],
-                "Vàng": ["hang vang", "the vang", "khach hang vang", "thanh vien vang"],
-                "Bạc": ["hang bac", "the bac", "khach hang bac", "thanh vien bac"],
-                "Thường": ["hang thuong", "the thuong", "thanh vien thuong"]},
-    "gioi_tinh": {"Nữ": ["khach hang nu", "khach nu", "gioi tinh nu", "phu nu"],
-                  "Nam": ["khach hang nam", "khach nam", "gioi tinh nam"]},
-    "pttt": {"Tiền mặt": ["tien mat"], "Thẻ ngân hàng": ["the ngan hang", "quet the", "the tin dung"],
-             "Chuyển khoản QR": ["chuyen khoan", "qr"], "Ví điện tử": ["vi dien tu", "momo", "zalopay"],
-             "Trả góp": ["tra gop"], "COD": ["cod", "thanh toan khi nhan hang"]},
-    "loai_ch": {"Flagship": ["flagship", "cua hang flagship"], "Mini": ["cua hang mini", "mini"],
-                "Tiêu chuẩn": ["cua hang tieu chuan"]},
-}
+# Cách gọi riêng của từng doanh nghiệp (tên gọi khác của giá trị, tiền tố "cửa hàng ...", thứ tự ưu tiên chiều...)
+# không nằm trong mã: khai báo ở semantic_layer.yml, mục `nlu`. Mã chỉ giữ quy tắc chung của tiếng Việt.
 # cụm từ sau khi bỏ dấu trùng với từ thông dụng khác ("hãng" = "hàng", "năm" = "nam", "sàn" = "sản"...)
 AMBIGUOUS_NORM = {"hang", "nam", "san", "the", "ban", "ma", "mau", "kho hang"}
-SKIP_BARE_VALUES = {"hang_tv", "gioi_tinh", "loai_ch", "trang_thai"}
 MONTH_WORDS = {"gieng": 1, "chap": 12, "muoi mot": 11, "muoi hai": 12, "muoi": 10}
 ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4}
 FOLLOWUP_START = ("con ", "the con", "vay con", "vay ", "con neu", "neu ", "chi ", "loc ", "bo ", "them ", "so voi",
                   "chia theo", "theo ", "tach theo", "ve bieu do", "hien thi", "doi sang", "chuyen sang", "top ", "con lai")
 GROUP_MARKERS = ("theo", "tung", "moi", "cac", "giua cac", "nhung", "phan theo", "chia theo", "tach theo", "tat ca cac")
+# từ hư và từ hỏi: không mang ý nghĩa truy vấn nên không tính là "chưa hiểu"
+FILLER = set("la bao nhieu co cua cac nhung theo trong tai o va nao gi ai duoc da dang se thi sao con cho toi minh biet hay xem "
+             "voi ve den tu hien thi ket qua nhe a vui long giup xin ban ra di top cao thap nhat lon nho it so sanh luong "
+             "cuoi dau het tinh".split())      # "cuối tháng 6", "đầu năm", "tính đến": đi kèm biểu thức thời gian đã hiểu
+WHY_RE = re.compile(r"\b(vi sao|tai sao|nguyen nhan|ly do (gi|nao)|giai thich (bien dong|su|vi)|why|dieu gi khien|do dau)\b")
+
+
+def is_why_question(question: str) -> bool:
+    """Câu hỏi tìm nguyên nhân biến động ("vì sao ... giảm")."""
+    return bool(WHY_RE.search(norm(question)))
 
 
 @dataclass
@@ -144,15 +126,10 @@ class OfflineNLU:
                 p = norm(re.sub(r"\(.*?\)", "", s))
                 if p:
                     self.metric_phr.append((p, name))
-        extra = {"ty_le_dat_kh": ["dat ke hoach doanh thu", "ty le dat ke hoach doanh thu", "phan tram ke hoach",
-                                  "hoan thanh ke hoach doanh thu", "so voi ke hoach"],
-                 "so_luong_ban": ["ban duoc bao nhieu cai", "ban duoc bao nhieu chiec", "ban duoc bao nhieu may",
-                                  "bao nhieu san pham", "so luong", "ban ra bao nhieu"],
-                 "doanh_thu_gop": ["doanh so ban hang"],
-                 "gia_tri_ton_kho": ["gia tri hang ton"]}
-        for k, lst in extra.items():
-            for p in lst:
-                self.metric_phr.append((p, k))
+        hints = self.cfg.get("nlu") or {}          # cách gọi riêng của doanh nghiệp, xem chú thích trong semantic_layer.yml
+        for k, lst in (hints.get("metric_phrases") or {}).items():
+            if k in self.sem.metrics:
+                self.metric_phr += [(norm(p), k) for p in lst if norm(p)]
         self.metric_phr.sort(key=lambda x: -len(x[0]))
 
         self.dim_phr = []
@@ -163,50 +140,102 @@ class OfflineNLU:
                 p = norm(re.sub(r"\(.*?\)", "", s))
                 if p and len(p) > 1 and p not in AMBIGUOUS_NORM:
                     self.dim_phr.append((p, name))
-        self.dim_phr += [("hang san xuat", "thuong_hieu"), ("nhan hieu", "thuong_hieu"), ("cac hang", "thuong_hieu"),
-                         ("theo hang", "thuong_hieu")]
+        for k, lst in (hints.get("dim_phrases") or {}).items():
+            if k in self.sem.dims:
+                self.dim_phr += [(norm(p), k) for p in lst if norm(p)]
         self.dim_phr.sort(key=lambda x: -len(x[0]))
+        # tên chiều chứa trọn một tên chỉ số ("loại chi phí" chứa "chi phí"): phải giữ chỗ trước khi khớp chỉ số
+        self.dim_over = [p for p, _ in self.dim_phr
+                         if any(re.search(r"(?<![a-z0-9])" + re.escape(mp) + r"(?![a-z0-9])", p) for mp, _ in self.metric_phr)]
 
         cat = get_catalog()
         self.value_phr = []  # (phrase, dim, canonical value, op)
-        aliases_prov = {}
-        try:
-            from .warehouse import get_warehouse
-            for alias, prov in get_warehouse().fetch("SELECT alias, tinh_tp FROM ref.tinh_alias"):
-                aliases_prov.setdefault(prov, set()).add(norm(alias))
-        except Exception:
-            pass
-        for dim in DIM_PRIORITY:
-            if dim not in self.sem.dims:
-                continue
-            vals = self.sem.dim_values(dim)
-            for v in vals:
-                # giá trị là từ thông dụng ("Thường", "Vàng", "Nam"≈"năm") -> chỉ nhận qua alias có ngữ cảnh
-                forms = set() if dim in SKIP_BARE_VALUES else {norm(v)}
-                if dim == "chi_nhanh":
-                    base = norm(v.replace("ABC ", ""))
-                    forms |= {f"cua hang {base}", f"chi nhanh {base}", f"abc {base}", base}
-                if dim == "kho":
-                    base = norm(v.replace("Kho tổng ", "").replace("Kho ", ""))
-                    forms |= {f"kho {base}", f"kho tong {base}"}
-                if dim == "khuyen_mai":
-                    forms.add(norm(re.sub(r"\s*\d{4}$", "", v)))
-                if dim in ("tinh_tp", "tinh_kh"):
-                    forms |= {a for a in aliases_prov.get(v, set()) if len(a) > 2}
-                for f in EXTRA_VALUE_ALIASES.get(dim, {}).get(v, []):
-                    forms.add(f)
-                op = "like" if dim == "san_pham" else "in"
+        # thứ tự ưu tiên khi một cụm từ khớp giá trị của nhiều chiều: theo khai báo, rồi tới các chiều còn lại
+        prio = [d for d in (hints.get("dim_priority") or []) if d in self.sem.dims]
+        prio += [d for d, x in self.sem.dims.items() if x.get("kind") != "time" and d not in prio]
+        skip_bare = set(hints.get("skip_bare_values") or [])      # giá trị trùng từ thông dụng: chỉ nhận qua tên gọi khác
+        like_dims = hints.get("like_dimensions") or {}            # chiều nhiều giá trị dài (tên sản phẩm): lọc kiểu "chứa"
+        self.context_remap = [r for r in (hints.get("context_remap") or []) if r.get("to") in self.sem.dims]
+        table_aliases: dict = {}                                  # tên gọi khác lấy từ bảng tra cứu trong kho
+        for dim, sql in (hints.get("alias_sql") or {}).items():
+            try:
+                from .warehouse import get_warehouse
+                for alias, val in get_warehouse().fetch(sql):
+                    table_aliases.setdefault(dim, {}).setdefault(val, set()).add(norm(alias))
+            except Exception:
+                pass
+        for dim in prio:
+            fc = (hints.get("value_forms") or {}).get(dim) or {}
+            named = (hints.get("value_aliases") or {}).get(dim) or {}
+            for v in self.sem.dim_values(dim):
+                forms = set() if dim in skip_bare else {norm(v)}
+                if fc:      # vd "ABC Cầu Giấy" -> "cầu giấy", "cửa hàng cầu giấy", "chi nhánh cầu giấy"
+                    base = v
+                    for pre in fc.get("strip") or []:
+                        base = base.replace(pre, "")
+                    base = norm(re.sub(fc["strip_regex"], "", base) if fc.get("strip_regex") else base)
+                    forms |= {f"{norm(p)} {base}" for p in fc.get("prefixes") or []}
+                    if fc.get("bare", True):
+                        forms.add(base)
+                forms |= {a for a in table_aliases.get(dim, {}).get(v, set()) if len(a) > 2}
+                forms |= {norm(f) for f in named.get(v, [])}
+                op = "like" if dim in like_dims else "in"
                 for f in forms:
                     if f and len(f) >= 2 and not f.isdigit():
                         self.value_phr.append((f, dim, v, op))
-        # tên sản phẩm rút gọn (bỏ dung lượng) -> lọc LIKE theo dòng sản phẩm
-        for v in self.sem.dim_values("san_pham"):
-            short = re.sub(r"\s+\d+GB$|\s+\(.*\)$", "", v)
-            if short != v:
-                self.value_phr.append((norm(short), "san_pham", short, "like"))
-        self.value_phr.sort(key=lambda x: (-len(x[0]), DIM_PRIORITY.index(x[1]) if x[1] in DIM_PRIORITY else 99))
+        for dim, lc in like_dims.items():       # tên rút gọn (vd bỏ dung lượng "256GB") -> lọc theo dòng sản phẩm
+            for v in self.sem.dim_values(dim) if lc and lc.get("short_regex") else []:
+                short = re.sub(lc["short_regex"], "", v)
+                if short != v:
+                    self.value_phr.append((norm(short), dim, short, "like"))
+        self.value_phr.sort(key=lambda x: (-len(x[0]), prio.index(x[1]) if x[1] in prio else 99))
         self.anchor = dt.date.fromisoformat(cat.anchor_date())
-        self.data_start = dt.date.fromisoformat(str(cat.meta.get("ngay_bat_dau", "2025-01-01"))[:10])
+        self.data_start = dt.date.fromisoformat(cat.data_start())
+        # thuật ngữ mơ hồ do doanh nghiệp khai báo (semantic_layer.yml: ambiguities)
+        self.term_amb, self.rank_amb = [], []
+        for amb in self.cfg.get("ambiguities") or []:
+            a = dict(amb, _pref_key=amb.get("pref_key") or amb["id"],
+                     _triggers=[norm(x) for x in amb.get("triggers", []) if norm(x)],
+                     _weak=[norm(x) for x in amb.get("weak_triggers", []) if norm(x)],
+                     _unless=[norm(x) for x in amb.get("unless_any", []) if norm(x)])
+            (self.rank_amb if amb.get("requires_no_metric") else self.term_amb).append(a)
+
+    # ------------------------------------------------------------------ thuật ngữ mơ hồ
+    @staticmethod
+    def _clarify(amb: dict) -> dict:
+        return {"id": amb["id"], "question": amb["question"], "pref_key": amb["_pref_key"],
+                "options": [{"label": o["label"], "metric": o.get("metric")} for o in amb["options"]]}
+
+    def ambiguity_metrics(self, topic: str | None = None) -> list[str]:
+        """Các chỉ số dễ nhầm của một thuật ngữ mơ hồ (topic = '__amb__:<id>'); không nêu thì lấy thuật ngữ đầu tiên."""
+        ambs = self.term_amb + self.rank_amb
+        amb = next((a for a in ambs if topic == f"__amb__:{a['id']}"), self.term_amb[0] if self.term_amb else None)
+        names = [o["metric"] for o in amb["options"] if o.get("metric") in self.sem.metrics] if amb else []
+        return names or list(self.sem.metrics)[:2]
+
+    def pref_key_for(self, metrics: list) -> str | None:
+        """Khóa ghi nhớ lựa chọn của người dùng cho nhóm chỉ số này (để lần sau không hỏi lại)."""
+        chosen = {m for m in metrics if m}
+        for a in self.term_amb + self.rank_amb:
+            if chosen and chosen <= {o.get("metric") for o in a["options"]}:
+                return a["_pref_key"]
+        return None
+
+    def detect_ambiguity(self, question: str, memory: dict | None = None) -> dict | None:
+        """Chốt chặn trước khi gọi LLM: câu hỏi chạm thuật ngữ mơ hồ đã khai báo thì hỏi lại bằng code.
+
+        Chỉ nhận tín hiệu chắc chắn: bỏ qua trigger yếu (vd "top") và trường hợp câu hỏi đã có từ phân biệt (unless_any),
+        vì khi đó LLM có thể hiểu được một tiêu chí mà bộ luật không biết.
+        """
+        r = self.parse(question, memory)
+        hit = r.matched.get("ambiguity") or {}
+        if not r.clarification or r.intent not in ("metric_query", "variance") or hit.get("weak"):
+            return None
+        t = norm(question)
+        amb = next((a for a in self.term_amb + self.rank_amb if a["id"] == hit.get("id")), None)
+        if amb and any(re.search(r"(?<![a-z0-9])" + re.escape(u) + r"(?![a-z0-9])", t) for u in amb["_unless"]):
+            return None
+        return r.clarification
 
     # ------------------------------------------------------------------ tiện ích span
     @staticmethod
@@ -360,7 +389,7 @@ class OfflineNLU:
         r = NLUResult()
 
         # ý định
-        if re.search(r"\b(vi sao|tai sao|nguyen nhan|ly do (gi|nao)|giai thich (bien dong|su|vi)|why|dieu gi khien|do dau)\b", t):
+        if WHY_RE.search(t):
             r.intent = "variance"
         elif re.search(r"\b(dinh nghia|duoc tinh (nhu the nao|the nao|ra sao)|cong thuc|tinh nhu the nao|nghia la gi|la gi)\b", t):
             r.intent = "metric_info"
@@ -385,6 +414,9 @@ class OfflineNLU:
 
         # chỉ số
         metrics, mpos = [], []
+        held = [(mm.start(), mm.end()) for p in self.dim_over for mm in self._find_all(t, p, mask)]
+        for s0, e0 in held:             # giữ chỗ cho tên chiều chứa tên chỉ số, trả lại sau khi khớp xong chỉ số
+            self._take(mask, s0, e0)
         for p, name in self.metric_phr:
             for mm in self._find_all(t, p, mask):
                 self._take(mask, mm.start(), mm.end())
@@ -393,20 +425,26 @@ class OfflineNLU:
                     mpos.append(mm.start())
         order = sorted(range(len(metrics)), key=lambda i: mpos[i])
         metrics = [metrics[i] for i in order]
-        revenue_generic = False
-        for mm in self._find_all(t, "doanh thu", mask):
-            self._take(mask, mm.start(), mm.end())
-            revenue_generic = True
-        if re.search(r"\bban duoc bao nhieu tien\b", t):
-            revenue_generic = True
+        # thuật ngữ mơ hồ còn sót lại ngoài mọi cụm chỉ số đã khớp (vd "doanh thu" không nói gộp hay thuần)
+        vague = None
+        for amb in self.term_amb:
+            for trig in amb["_triggers"]:
+                for mm in self._find_all(t, trig, mask):
+                    self._take(mask, mm.start(), mm.end())
+                    vague = vague or dict(amb, _hit=trig)
+        revenue_generic = vague is not None
+        for s0, e0 in held:
+            for i in range(s0, e0):
+                mask[i] = False
 
         # giá trị thực thể -> bộ lọc
         filters: dict[str, dict] = {}
         for p, dim, val, op in self.value_phr:
             for mm in self._find_all(t, p, mask):
                 d2 = dim
-                if dim == "tinh_tp" and re.search(r"khach( hang)?( o| tai| song o| den tu)?\s*$", t[:mm.start()][-25:]):
-                    d2 = "tinh_kh"
+                for rule in self.context_remap:     # vd tỉnh đứng sau "khách hàng ở" -> tỉnh của khách, không phải của cửa hàng
+                    if rule.get("dimension") == dim and re.search(rule["before_regex"], t[:mm.start()][-25:]):
+                        d2 = rule["to"]
                 self._take(mask, mm.start(), mm.end())
                 f = filters.setdefault(d2, {"dimension": d2, "op": op, "values": []})
                 if val not in f["values"]:
@@ -505,26 +543,31 @@ class OfflineNLU:
                 cmp = [Span(dt.date.fromisoformat(c["start"]), dt.date.fromisoformat(c["end"]), c.get("label", ""), 0)]
 
         # ---------------------------------------------------------------- mơ hồ
-        if revenue_generic:
-            pm = prefs.get("revenue_metric")
-            if pm:
+        if vague:
+            pm = prefs.get(vague["_pref_key"])
+            if pm in self.sem.metrics:
                 if pm not in metrics:
                     metrics.insert(0, pm)
-                r.assumptions.append(f"“Doanh thu” hiểu là {self.sem.metrics[pm]['label']} (theo lựa chọn trước đó trong hội thoại).")
-            elif not any(m in metrics for m in ("doanh_thu_thuan", "doanh_thu_gop")):
-                amb = self.cfg["ambiguities"][0]
-                r.clarification = {"id": amb["id"], "question": amb["question"], "pref_key": "revenue_metric",
-                                   "options": [{"label": o["label"], "metric": o["metric"]} for o in amb["options"]]}
+                term = (vague.get("triggers") or [vague["_hit"]])[0]
+                r.assumptions.append(f"“{term[:1].upper() + term[1:]}” hiểu là {self.sem.metrics[pm]['label']} "
+                                     "(theo lựa chọn trước đó trong hội thoại).")
+            elif not any(m in metrics for m in (o.get("metric") for o in vague["options"])):
+                r.clarification = self._clarify(vague)
+                r.matched["ambiguity"] = {"id": vague["id"], "trigger": vague["_hit"], "weak": False}
         if not metrics and r.clarification is None and r.intent in ("metric_query", "variance"):
-            if re.search(r"\b(ban chay|tot nhat|hieu qua nhat|noi bat nhat|manh nhat|dan dau|top)\b", t):
-                pm = prefs.get("best_criteria")
-                if pm:
+            for amb in self.rank_amb:           # xếp hạng không nêu tiêu chí ("bán chạy nhất", "tốt nhất"...)
+                hit = next((x for x in amb["_triggers"] + amb["_weak"]
+                            if re.search(r"(?<![a-z0-9])" + re.escape(x) + r"(?![a-z0-9])", t)), None)
+                if not hit:
+                    continue
+                pm = prefs.get(amb["_pref_key"])
+                if pm in self.sem.metrics:
                     metrics = [pm]
                     r.assumptions.append(f"Xếp hạng theo {self.sem.metrics[pm]['label']} (theo lựa chọn trước đó).")
                 else:
-                    amb = self.cfg["ambiguities"][1]
-                    r.clarification = {"id": amb["id"], "question": amb["question"], "pref_key": "best_criteria",
-                                       "options": [{"label": o["label"], "metric": o["metric"]} for o in amb["options"]]}
+                    r.clarification = self._clarify(amb)
+                    r.matched["ambiguity"] = {"id": amb["id"], "trigger": hit, "weak": hit in amb["_weak"]}
+                break
 
         # ---------------------------------------------------------------- thời gian -> plan
         time_range, compare = None, None
@@ -597,9 +640,29 @@ class OfflineNLU:
             r.intent = "unknown"
             r.confidence = 0.2
         if r.intent in ("metric_info", "schema_info", "dq", "help"):
-            r.metric_topic = metrics[0] if metrics else ("__revenue__" if revenue_generic else None)
+            r.metric_topic = metrics[0] if metrics else (f"__amb__:{vague['id']}" if vague else None)
             r.clarification = None
+        # những từ có nghĩa mà bộ luật chưa dùng tới: tín hiệu cho biết plan có thể chưa thể hiện hết câu hỏi
+        soft = set(FILLER) | ({str(limit)} if limit else set()) | ({grain} if grain else set())
+        soft |= {"cung", "ky", "yoy"} if yoy else set()
+        soft |= set(m.group(0).split()) if m else set()                 # "so với"
+        soft |= set(hm.group(0).split()) if having else set()           # "trên 15 tỷ"
+        toks = list(re.finditer(r"[a-z0-9]+", t))
+        words = [(w, x) for w in re.findall(r"[^\s,;:?!()\"“”']+", question) for x in re.findall(r"[a-z0-9]+", norm(w))]
+        if [x for _, x in words] == [k.group(0) for k in toks]:         # khớp từng từ gốc (có dấu) với vị trí đã chuẩn hóa
+            left = [w for (w, x), k in zip(words, toks) if x not in soft and not any(mask[k.start():k.end()])]
+        else:
+            left = [k.group(0) for k in toks if k.group(0) not in soft and not any(mask[k.start():k.end()])]
+        r.matched["unparsed"] = list(dict.fromkeys(left))
         return r
+
+    def draft_for_llm(self, question: str, memory: dict | None = None) -> dict | None:
+        """Bản nháp plan do bộ luật lập, đưa cho LLM kiểm tra và hoàn thiện (None nếu bộ luật không lập được)."""
+        r = self.parse(question, memory)
+        if r.intent != "metric_query" or not r.plan.get("metrics") or r.clarification:
+            return None
+        plan = {k: v for k, v in r.plan.items() if v not in (None, [], {})}
+        return {"plan": plan, "unparsed": r.matched.get("unparsed", [])}
 
 
 _nlu: OfflineNLU | None = None

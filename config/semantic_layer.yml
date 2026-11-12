@@ -350,17 +350,111 @@ metrics:
     description: "Doanh thu thuần trên mỗi đồng chi phí marketing."
     synonyms: [roas, roi marketing, hiệu quả marketing, doanh thu trên chi phí marketing]
 
+# Cách người trong doanh nghiệp gọi tên sự vật, dùng cho bộ hiểu câu hỏi bằng luật (app/nlu.py). Mọi mục đều tùy chọn;
+# viết có dấu hay không dấu đều được.
+nlu:
+  # một cụm từ khớp giá trị của nhiều chiều thì ưu tiên chiều đứng trước
+  dim_priority: [vung, nganh_hang, nhom_kenh, kenh, tinh_tp, chi_nhanh, kho, thuong_hieu, hang_tv, khuyen_mai, pttt,
+                 ly_do_tra, loai_ch, gioi_tinh, ncc, nhom_sp, san_pham, tinh_kh]
+  # giá trị trùng từ thông dụng ("Vàng", "Nam", "Thường"): chỉ nhận qua tên gọi khác có ngữ cảnh ở value_aliases
+  skip_bare_values: [hang_tv, gioi_tinh, loai_ch, trang_thai]
+  metric_phrases:          # cách hỏi không nằm gọn trong synonyms của chỉ số
+    ty_le_dat_kh: [dat ke hoach doanh thu, ty le dat ke hoach doanh thu, phan tram ke hoach, hoan thanh ke hoach doanh thu, so voi ke hoach]
+    so_luong_ban: [ban duoc bao nhieu cai, ban duoc bao nhieu chiec, ban duoc bao nhieu may, bao nhieu san pham, so luong, ban ra bao nhieu]
+    doanh_thu_gop: [doanh so ban hang]
+    gia_tri_ton_kho: [gia tri hang ton]
+  dim_phrases:
+    thuong_hieu: [hang san xuat, nhan hieu, cac hang, theo hang]
+  value_forms:             # biến thể của tên giá trị: bỏ tiền tố (strip), thêm tiền tố (prefixes), có nhận tên trần không (bare)
+    chi_nhanh: {strip: ["ABC "], prefixes: [cua hang, chi nhanh, abc], bare: true}
+    kho: {strip: ["Kho tổng ", "Kho "], prefixes: [kho, kho tong], bare: false}
+    khuyen_mai: {strip_regex: '\s*\d{4}$', bare: true}
+  alias_sql:               # tên gọi khác lấy từ bảng tra cứu trong kho: (tên gọi khác, giá trị chuẩn)
+    tinh_tp: "SELECT alias, tinh_tp FROM ref.tinh_alias"
+    tinh_kh: "SELECT alias, tinh_tp FROM ref.tinh_alias"
+  like_dimensions:         # chiều lọc kiểu "chứa"; short_regex cắt phần đuôi để khớp cả dòng sản phẩm
+    san_pham: {short_regex: '\s+\d+GB$|\s+\(.*\)$'}
+  context_remap:           # cùng một giá trị nhưng ngữ cảnh đứng trước đổi chiều
+    - {dimension: tinh_tp, to: tinh_kh, before_regex: 'khach( hang)?( o| tai| song o| den tu)?\s*$'}
+  value_aliases:
+    vung:
+      Miền Bắc: [mien bac, phia bac, ngoai bac, khu vuc phia bac, khu vuc mien bac]
+      Miền Trung: [mien trung, khu vuc mien trung, phia trung]
+      Miền Nam: [mien nam, phia nam, trong nam, khu vuc phia nam, khu vuc mien nam]
+    kenh:
+      Tại cửa hàng: [tai cua hang, kenh cua hang, mua truc tiep, ban truc tiep]
+      Website: [website, web, trang web]
+      Ứng dụng di động: [app, ung dung, mobile app, ung dung di dong]
+      Sàn TMĐT: [san tmdt, san thuong mai dien tu, shopee, lazada, tiki, marketplace]
+    nhom_kenh:
+      Online: [online, truc tuyen, kenh online]
+      Offline: [offline, kenh offline]
+    nganh_hang:
+      Điện thoại: [dien thoai, smartphone, dien thoai di dong]
+      Laptop: [laptop, may tinh xach tay, notebook]
+      Máy tính bảng: [may tinh bang, tablet]
+      Đồng hồ thông minh: [dong ho thong minh, smartwatch, dong ho]
+      Tivi: [tivi, ti vi, tv]
+      Âm thanh: [am thanh, thiet bi am thanh]
+      Gia dụng: [gia dung, do gia dung]
+      Điện lạnh: [dien lanh]
+      Phụ kiện: [phu kien]
+    hang_tv:
+      Kim cương: [kim cuong, hang kim cuong, the kim cuong]
+      Vàng: [hang vang, the vang, khach hang vang, thanh vien vang]
+      Bạc: [hang bac, the bac, khach hang bac, thanh vien bac]
+      Thường: [hang thuong, the thuong, thanh vien thuong]
+    gioi_tinh:
+      Nữ: [khach hang nu, khach nu, gioi tinh nu, phu nu]
+      Nam: [khach hang nam, khach nam, gioi tinh nam]
+    pttt:
+      Tiền mặt: [tien mat]
+      Thẻ ngân hàng: [the ngan hang, quet the, the tin dung]
+      Chuyển khoản QR: [chuyen khoan, qr]
+      Ví điện tử: [vi dien tu, momo, zalopay]
+      Trả góp: [tra gop]
+      COD: [cod, thanh toan khi nhan hang]
+    loai_ch:
+      Flagship: [flagship, cua hang flagship]
+      Mini: [cua hang mini, mini]
+      Tiêu chuẩn: [cua hang tieu chuan]
+
+# Phân tích biến động ("vì sao ... tăng/giảm"): chiều nào đem ra phân rã, đào sâu tiếp theo chiều nào,
+# và chỉ số tiền nào tách được thành "số lượng × giá trị trung bình". Bỏ cả mục này thì hệ thống tự chọn
+# các chiều có danh mục 2–60 giá trị.
+analysis:
+  driver_dimensions: [vung, kenh, nganh_hang, loai_ch, chi_nhanh, thuong_hieu]
+  coarseness: {vung: 0, kenh: 1, nganh_hang: 2, loai_ch: 3, thuong_hieu: 4, chi_nhanh: 5}   # số nhỏ = chiều thô, ưu tiên hơn
+  drill:
+    vung: [chi_nhanh, nganh_hang]
+    kenh: [vung, nganh_hang]
+    nganh_hang: [vung, thuong_hieu]
+    loai_ch: [chi_nhanh]
+    thuong_hieu: [vung]
+    chi_nhanh: [nganh_hang]
+  decomposition:
+    doanh_thu_thuan: &tach_don {count: so_don, units: so_luong_ban, count_label: số đơn, value_label: giá trị đơn trung bình, count_driver_label: số lượng đơn}
+    doanh_thu_gop: *tach_don
+
 # Thuật ngữ mơ hồ -> agent phải hỏi lại (trừ khi người dùng đã chọn trước trong hội thoại)
+#   triggers:       cụm từ mơ hồ. Loại thường: hỏi lại khi cụm từ xuất hiện ngoài mọi tên chỉ số.
+#                   Loại requires_no_metric: hỏi lại khi câu hỏi xếp hạng mà không nêu chỉ số nào.
+#   weak_triggers:  chỉ dùng cho bộ luật offline; khi có LLM thì để LLM tự hiểu tiêu chí (vd "top 5 ... theo ...").
+#   unless_any:     câu hỏi đã có một trong các từ này thì coi như đã rõ, không chặn LLM.
+#   pref_key:       khóa ghi nhớ lựa chọn của người dùng trong hội thoại.
 ambiguities:
   - id: revenue_definition
-    triggers: [doanh thu]
+    pref_key: revenue_metric
+    triggers: [doanh thu, bán được bao nhiêu tiền]
     unless_any: [gộp, thuần, net, gmv, doanh số, trước chiết khấu, sau chiết khấu, kế toán, thực]
     question: "“Doanh thu” đang được các phòng ban định nghĩa khác nhau. Bạn muốn dùng định nghĩa nào?"
     options:
       - {label: "Doanh thu thuần (Tài chính) — sau chiết khấu, trừ hàng trả, chỉ đơn hoàn thành", metric: doanh_thu_thuan}
       - {label: "Doanh thu gộp (Kinh doanh) — trước chiết khấu, loại đơn hủy", metric: doanh_thu_gop}
   - id: best_criteria
-    triggers: [bán chạy, tốt nhất, hiệu quả nhất, nổi bật nhất, mạnh nhất, top]
+    pref_key: best_criteria
+    triggers: [bán chạy, tốt nhất, hiệu quả nhất, nổi bật nhất, mạnh nhất, dẫn đầu]
+    weak_triggers: [top]
     requires_no_metric: true
     question: "Bạn muốn xếp hạng theo tiêu chí nào?"
     options:

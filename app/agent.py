@@ -19,14 +19,15 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import json
 import re
 import time
 import uuid
 
-from . import config, cost, dq, explain, llm, repair, sqlcheck
+from . import config, cost, dq, explain, llm, profile, repair, sqlcheck
 from .catalog import get_catalog
 from .governance import UserCtx, validate
-from .nlu import get_nlu
+from .nlu import get_nlu, is_why_question
 from .retriever import get_retriever
 from .semantic import SemanticError, get_semantic
 from .store import get_store
@@ -65,18 +66,7 @@ class Graph:
         return state
 
 
-SAMPLE_QUESTIONS = [
-    "Doanh thu thuần theo tháng năm 2026",
-    "Top 5 cửa hàng có doanh thu thuần cao nhất tháng 10/2026",
-    "Doanh thu tháng trước theo miền",
-    "Vì sao doanh thu thuần tháng 9/2026 giảm so với cùng kỳ?",
-    "Tỷ lệ đạt kế hoạch doanh thu theo miền tháng 10/2026",
-    "Tồn kho điện thoại tại kho Đà Nẵng theo tuần từ tháng 4 đến tháng 7 năm 2026",
-    "Sản phẩm bán chạy nhất 3 tháng gần nhất",
-    "Doanh thu gộp quý 3 năm 2026 so với cùng kỳ theo ngành hàng",
-    "Tỷ lệ hủy đơn theo kênh năm nay",
-    "Doanh thu thuần là gì?",
-]
+SAMPLE_QUESTIONS = profile.sample_questions()      # câu hỏi mẫu của doanh nghiệp đang nạp (config/profile.yml)
 
 
 class Agent:
@@ -193,6 +183,11 @@ class Agent:
     def n_planner(self, s):
         q = s["question"]
         ret = get_retriever()
+        # 0) "bạn là gì / hỗ trợ gì": trả lời từ hồ sơ doanh nghiệp, không gọi LLM nên không bịa tính năng
+        if not s.get("clarified") and profile.is_intro_question(q):
+            s["intent"] = "help"
+            s["_detail"] = "Câu hỏi giới thiệu: trả lời từ hồ sơ doanh nghiệp và semantic layer, không gọi LLM"
+            return "responder"
         # 1) tái sử dụng SQL đã được xác nhận (học từ phản hồi)
         if not s.get("clarified"):
             hit =ret.reusable(q, threshold=float(s["settings"].get("fewshot_reuse_threshold", 0.8)))
@@ -204,15 +199,23 @@ class Agent:
                                   f"(độ tương đồng {hit['similarity']:.2f}).")
                 s["_detail"] = f"Few-shot hit #{hit['id']} ({hit['source']})"
                 return "optimizer"
-        # 2) Claude function calling
-        if s["mode"] == "claude":
+        # 2) LLM function calling (Claude hoặc OpenRouter)
+        if s["mode"] in llm.LLM_MODES:
+            # chốt chặn bằng code: thuật ngữ mơ hồ do doanh nghiệp khai báo thì luôn hỏi lại, không phụ thuộc mô hình
+            if not s.get("clarified"):
+                amb = get_nlu().detect_ambiguity(q, s["memory"])
+                if amb:
+                    s["clarification"] = dict(amb, question_text=amb["question"])
+                    s["_detail"] = f"Thuật ngữ mơ hồ theo semantic layer ({amb['id']}): hỏi lại trước khi gọi LLM"
+                    return "clarify"
+            name = llm.MODE_LABEL[s["mode"]]
             try:
                 return self._plan_with_claude(s)
             except (llm.LLMUnavailable, llm.LLMError) as e:
-                s["notes"].append(f"Không dùng được Claude ({e}). Chuyển sang bộ hiểu ngôn ngữ offline.")
+                s["notes"].append(f"Không dùng được {name} ({e}). Chuyển sang bộ hiểu ngôn ngữ offline.")
                 s["mode"] = "offline"
             except Exception as e:  # pragma: no cover
-                s["notes"].append(f"Lỗi khi gọi Claude ({type(e).__name__}). Chuyển sang chế độ offline.")
+                s["notes"].append(f"Lỗi khi gọi {name} ({type(e).__name__}). Chuyển sang chế độ offline.")
                 s["mode"] = "offline"
         # 3) NLU offline
         r = get_nlu().parse(q, s["memory"])
@@ -238,25 +241,65 @@ class Agent:
         shots = ret.search_fewshots(s["question"], k=int(s["settings"].get("fewshot_k", 4)))
         fs_txt = "\n".join(f"- Q: {f['question']}\n  SQL: {re.sub(r'\s+', ' ', f['sql'])}" for f in shots) or "(chưa có)"
         mem = {k: s["memory"].get(k) for k in ("prefs", "last_plan", "last_question", "last_sql") if s["memory"].get(k)}
-        ctx = {"anchor": s["anchor"].isoformat(), "role": user.role, "rls": user.rls, "memory": mem, "fewshots": fs_txt}
-        client = llm.Claude(s["settings"])
-        out = client.plan(s["question"], ctx, self._tool_impls(user), trace=s["llm_trace"])
+        hints = []
+        why = is_why_question(s["question"])
+        if s.get("clarified"):
+            c = s["clarified"]
+            hints.append(f"Người dùng vừa làm rõ câu hỏi bằng lựa chọn: “{c['label']}”"
+                         + (f" (chỉ số {c['metric']})" if c.get("metric") else "") + ". Dùng đúng lựa chọn này, không hỏi lại.")
+        if why:
+            hints.append("Đây là câu hỏi tìm nguyên nhân biến động: nộp intent=variance, kind=semantic với semantic_plan gồm "
+                         "metrics (một chỉ số), filters, time_range (kỳ đang hỏi) và compare (kỳ so sánh; nếu người dùng "
+                         "không nêu thì dùng kỳ liền trước có cùng độ dài).")
+        draft = None if why else get_nlu().draft_for_llm(s["question"], s["memory"])
+        if draft:       # bộ luật đề xuất, LLM kiểm tra: câu hỏi thông thường đi đúng định nghĩa chỉ số, đỡ lượt gọi
+            plan_txt = json.dumps(draft["plan"], ensure_ascii=False)
+            if draft["unparsed"]:
+                hints.append(
+                    f"Bộ phân tích bằng luật chỉ hiểu MỘT PHẦN câu hỏi. Phần nó hiểu được: {plan_txt}. "
+                    f"Những từ nó chưa hiểu: {', '.join(draft['unparsed'])}. Trước khi dùng plan này hãy xét các từ chưa hiểu: "
+                    "nếu chúng nói tới một đối tượng người dùng muốn xem từng dòng (như “nhân viên” trong “top 5 nhân viên”), "
+                    "một điều kiện lọc, hay một phép tính (trung bình theo nhóm, tỷ trọng, theo thứ trong tuần) mà danh sách "
+                    "dimension không có, thì plan này KHÔNG trả lời đúng câu hỏi: hãy viết SQL, chỉ tái dùng công thức và bộ "
+                    "lọc của chỉ số. Nếu chúng chỉ là từ đệm thì biên dịch rồi nộp plan (kind=semantic).")
+            else:
+                hints.append(
+                    f"Bộ phân tích bằng luật đã dùng hết các từ có nghĩa trong câu hỏi và đề xuất plan: {plan_txt}. "
+                    "Biên dịch rồi nộp đúng plan đó (kind=semantic), trừ khi bạn thấy nó sai ý câu hỏi.")
+        ctx = {"anchor": s["anchor"].isoformat(), "role": user.role, "rls": user.rls, "memory": mem, "fewshots": fs_txt,
+               "hints": hints}
+        client = llm.get_client(s["settings"], s["mode"])
+        out = client.plan(s["question"], ctx, self._tool_impls(user, draft), trace=s["llm_trace"])
         s["llm_usage"] = client.usage
         s["claude"] = client
         s["assumptions"] += out.get("assumptions") or []
         s["chart_hint"] = out.get("chart_hint") if out.get("chart_hint") not in (None, "auto", "table") else None
         s["intent"] = out.get("intent") or "metric_query"
         kind = out.get("kind")
-        s["_detail"] = f"Claude ({client.model}, effort={client.effort}): kind={kind}, intent={s['intent']}, " \
+        s["_detail"] = f"{llm.MODE_LABEL[s['mode']]} ({client.model}, effort={client.effort}): kind={kind}, intent={s['intent']}, " \
                        f"{len(s['llm_trace'])} lần gọi tool, {client.usage['calls']} lượt gọi API"
+        # Phân tích nguyên nhân chỉ dành cho câu hỏi "vì sao" (nhận diện bằng code), không theo nhãn intent của mô hình:
+        # - câu "vì sao" mà mô hình không lập được plan phân tích (viết truy vấn so sánh, hoặc hỏi lại dù các thuật ngữ mơ hồ
+        #   đã được code kiểm ở bước trước) -> dùng plan của bộ luật nếu bộ luật hiểu trọn câu hỏi;
+        # - câu so sánh thường ("so với cùng kỳ") mà mô hình gắn nhãn variance -> trả về bảng so sánh như người dùng hỏi.
+        if why and not (s["intent"] == "variance" and kind != "clarify" and (out.get("semantic_plan") or {}).get("metrics")):
+            r = get_nlu().parse(s["question"], s["memory"])
+            if r.intent == "variance" and r.plan.get("metrics") and not r.clarification:
+                s["intent"], s["plan"] = "variance", r.plan
+                s["assumptions"] += r.assumptions
+                s["notes"].append("Mô hình không lập kế hoạch phân tích nguyên nhân; dùng kế hoạch của bộ phân tích bằng luật.")
+                return "variance_analyst"
+        if not why and s["intent"] == "variance":
+            s["intent"] = "metric_query"
         if kind == "clarify" and out.get("clarification"):
             c = out["clarification"]
             s["clarification"] = {"id": "llm_" + uuid.uuid4().hex[:6], "question": s["question"], "question_text": c.get("question"),
-                                  "pref_key": "revenue_metric" if any(o.get("metric") in ("doanh_thu_thuan", "doanh_thu_gop") for o in c.get("options", [])) else None,
+                                  "pref_key": get_nlu().pref_key_for([o.get("metric") for o in c.get("options", [])]),
                                   "options": c.get("options", [])}
             return "clarify"
         if kind == "answer" or s["intent"] in ("help", "schema_info", "dq") and not out.get("sql") and not out.get("semantic_plan"):
-            s["info_text"] = out.get("answer_text")
+            # lời giới thiệu luôn do code dựng từ hồ sơ doanh nghiệp, không dùng văn bản của LLM
+            s["info_text"] = None if s["intent"] == "help" else out.get("answer_text")
             return "responder"
         if s["intent"] == "variance" and out.get("semantic_plan"):
             p = out["semantic_plan"]
@@ -278,7 +321,8 @@ class Agent:
         s["intent"] = "unknown"
         return "responder"
 
-    def _tool_impls(self, user: UserCtx) -> dict:
+    def _tool_impls(self, user: UserCtx, draft: dict | None = None) -> dict:
+        """Các tool cho LLM. draft = bản nháp plan của bộ luật (nếu có), dùng để cảnh báo khi plan bỏ sót bộ lọc."""
         cat, ret, sem = get_catalog(), get_retriever(), get_semantic()
         role = user.role_cfg
 
@@ -294,13 +338,20 @@ class Agent:
                 raise ValueError(f"Bảng {table} không tồn tại hoặc không được phép.")
             return cat.describe(fq, role, max_values=25)
 
-        def get_column_values(table: str, column: str, contains: str | None = None):
-            fq = cat.resolve(table)
+        def get_column_values(table: str = "", column: str = "", contains: str | None = None):
+            fq = cat.resolve(table or "")
+            if column in sem.dims and not (fq and column in cat.get(fq)["columns"]):
+                loc = sem.dim_column(column)        # mô hình hay truyền tên chiều phân tích thay cho tên cột
+                if not loc:
+                    raise ValueError(f"'{column}' là chiều thời gian hoặc biểu thức, không có danh mục giá trị; "
+                                     "khoảng thời gian đặt ở time_range.")
+                fq, column = loc
             if not fq or cat.get(fq)["schema"] not in role["schemas"]:
-                raise ValueError("Bảng không hợp lệ.")
+                raise ValueError(f"Bảng '{table}' không tồn tại hoặc không được phép. Tìm bảng bằng search_schema.")
             c = cat.get(fq)["columns"].get(column)
             if not c:
-                raise ValueError("Cột không tồn tại.")
+                raise ValueError(f"Cột '{column}' không có trong {fq}. Các cột của bảng: {', '.join(cat.get(fq)['columns'])}. "
+                                 "Cũng có thể truyền tên một chiều phân tích của semantic layer vào column.")
             if c.get("sensitivity") in role.get("deny_sensitivity", []):
                 raise ValueError("Cột bị hạn chế với vai trò hiện tại.")
             vals = c.get("values")
@@ -324,12 +375,38 @@ class Agent:
                 out["decision"] = cost.decide(est, role)["decision"]
                 out["lint"] = sqlcheck.lint(v, dq.known_issues())
                 out["rls_applied"] = v.rls_applied
+                must_fix = [l["code"] for l in out["lint"] if l["severity"] == "error"]
+                out["next"] = (f"Sửa các mục lint mức error ({', '.join(must_fix)}) rồi dry_run lại." if must_fix else
+                               "SQL hợp lệ. Lint mức warning/info chỉ để tham khảo, không cần sửa hay chạy lại. "
+                               "Nộp ngay bằng submit_answer (kind=sql).")
+            else:
+                out["next"] = "Sửa lỗi rồi gọi lại dry_run_sql."
             return out
 
-        def compile_semantic_plan(plan: dict):
+        def compile_semantic_plan(plan: dict | None = None, **fields):
+            # mô hình nhỏ hay gửi thẳng {"metrics": [...], ...} thay vì bọc trong {"plan": {...}} -> nhận cả hai dạng
+            plan = plan if isinstance(plan, dict) else fields
             c = sem.compile(plan)
             v = validate(c["sql"], user)
-            return {"sql": c["sql"], "ok": v.ok, "errors": v.errors, "notes": c["notes"]}
+            keep = {k: x for k, x in c["plan"].items() if x not in (None, [], {})}
+            out = {"ok": v.ok, "errors": v.errors, "notes": c["notes"], "plan": keep,
+                   "next": ("Plan hợp lệ. Nộp ngay bằng submit_answer với kind=semantic và semantic_plan là đúng plan này; "
+                            "không cần dry_run_sql.") if v.ok else "Sửa plan theo lỗi rồi biên dịch lại."}
+            # câu hỏi có nhắc đúng tên một giá trị trong kho mà plan không lọc theo nó -> nhắc mô hình xem lại
+            used = {f["dimension"] for f in c["plan"].get("filters") or []} | set(c["plan"].get("dimensions") or [])
+            dropped = [f for f in ((draft or {}).get("plan") or {}).get("filters") or [] if f["dimension"] not in used]
+            warnings = [f"Câu hỏi có nhắc “{', '.join(map(str, f['values']))}” ({sem.dims[f['dimension']]['label']}) "
+                        "nhưng plan không lọc theo giá trị này. Nếu người dùng muốn giới hạn theo giá trị đó thì thêm filter."
+                        for f in dropped]
+            # xếp hạng (limit/order_by) mà không nhóm theo chiều nào thì kết quả chỉ có một dòng tổng: vô nghĩa
+            if (c["plan"].get("limit") or c["plan"].get("order_by")) and not c["plan"].get("dimensions"):
+                warnings.append("Plan có limit/order_by nhưng không có dimension nào nên chỉ trả về MỘT dòng tổng, không phải bảng "
+                                "xếp hạng. Nếu đối tượng cần xếp hạng không nằm trong danh sách dimension của semantic layer thì "
+                                "phải viết SQL: GROUP BY mã của đối tượng đó, tái dùng đúng công thức và bộ lọc của chỉ số.")
+            if v.ok and warnings:
+                out["warnings"] = warnings
+                out["next"] = "Plan biên dịch được nhưng CHƯA nên nộp: xử lý các cảnh báo trước (sửa plan hoặc chuyển sang SQL)."
+            return out
 
         return {"search_schema": search_schema, "describe_table": describe_table, "get_column_values": get_column_values,
                 "dry_run_sql": dry_run_sql, "compile_semantic_plan": compile_semantic_plan}
@@ -351,7 +428,7 @@ class Agent:
             return "finalize"
         if intent == "metric_info":
             topic = s.get("metric_topic")
-            names = ["doanh_thu_thuan", "doanh_thu_gop"] if topic in (None, "__revenue__") else [topic]
+            names = [topic] if topic in sem.metrics else get_nlu().ambiguity_metrics(topic)
             cards = [sem.describe_metric(n) for n in names if n in sem.metrics]
             s["metric_cards"] = cards
             parts = []
@@ -370,15 +447,12 @@ class Agent:
             s["text"] = (f"Báo cáo chất lượng dữ liệu ({rep['generated_at']}): {rep['summary']['critical']} vấn đề nghiêm trọng, "
                          f"{rep['summary']['warning']} cảnh báo.\n\n" + "\n".join(f"- **{f['title']}**: {f['message']}" for f in open_f[:6]))
         elif intent == "help":
-            s["text"] = ("Mình là trợ lý phân tích dữ liệu tự phục vụ. Bạn hỏi bằng tiếng Việt, mình sẽ lập kế hoạch truy vấn, "
-                         "sinh SQL theo đúng định nghĩa chỉ số (semantic layer), kiểm duyệt phân quyền & chi phí, chạy trên kho dữ liệu "
-                         "và trả về bảng, biểu đồ, diễn giải (mọi con số được kiểm chứng). Ví dụ:\n" +
-                         "\n".join(f"- {q}" for q in SAMPLE_QUESTIONS[:6]))
-            s["suggestions"] = SAMPLE_QUESTIONS[:6]
+            s["text"] = profile.intro_text()
+            s["suggestions"] = profile.sample_questions()[:6]
         else:
             s["text"] = ("Mình chưa xác định được chỉ số bạn cần. Bạn có thể hỏi về: " +
                          ", ".join(m["label"].lower() for m in list(sem.metrics.values())[:12]) +
-                         "... Hoặc thử một câu mẫu bên dưới." + (" (Bật Claude để hỏi câu tự do ngoài semantic layer.)" if s["mode"] == "offline" else ""))
+                         "... Hoặc thử một câu mẫu bên dưới." + (" (Bật LLM — Claude hoặc OpenRouter — để hỏi câu tự do ngoài semantic layer.)" if s["mode"] == "offline" else ""))
             s["suggestions"] = SAMPLE_QUESTIONS[:5]
         s["_detail"] = f"Trả lời thông tin ({intent})"
         return "finalize"
@@ -442,17 +516,17 @@ class Agent:
         s["attempts"] += 1
         before = s["sql"]
         tables = (s.get("validation") or {}).get("tables") or []
-        new, how = repair.rule_repair(before, e, tables or ["dw.fct_ct_dh", "dw.fct_dh"])
+        new, how = repair.rule_repair(before, e, tables or profile.core_tables())
         agent = "rule"
-        if new is None and s["mode"] == "claude":
+        if new is None and s["mode"] in llm.LLM_MODES:
             try:
-                client = s.get("claude") or llm.Claude(s["settings"])
+                client = s.get("claude") or llm.get_client(s["settings"], s["mode"])
                 cat = get_catalog()
-                schema_txt = cat.schema_text(tables or ["dw.fct_ct_dh", "dw.dim_sp", "dw.dim_cn"], s["user"].role_cfg)
+                schema_txt = cat.schema_text(tables or profile.core_tables(), s["user"].role_cfg)
                 out = client.repair_sql(before, [e], schema_txt, s["question"])
-                new, how, agent = out["sql"], out["explanation"], "claude"
+                new, how, agent = out["sql"], out["explanation"], s["mode"]
             except Exception as ex:
-                how = f"Claude không sửa được: {ex}"
+                how = f"{llm.MODE_LABEL[s['mode']]} không sửa được: {ex}"
         s["repairs"].append({"attempt": s["attempts"], "error": e, "agent": agent, "fix": how, "sql_before": before, "sql_after": new})
         s["_detail"] = f"Lần {s['attempts']}: {e.get('code')} → {how}"
         if new is None or new.strip() == before.strip():
@@ -513,13 +587,13 @@ class Agent:
 
     def n_explainer(self, s):
         r = s["result"]
-        if s["mode"] == "claude" and s["facts"] and not s["eval_mode"]:
+        if s["mode"] in llm.LLM_MODES and s["facts"] and not s["eval_mode"]:
             try:
-                client = s.get("claude") or llm.Claude(s["settings"])
+                client = s.get("claude") or llm.get_client(s["settings"], s["mode"])
                 txt = client.narrate(s["question"], s["facts"], s["template"])
                 if txt:
                     s["text"] = _render(txt, s["facts"])
-                    s["narrator"] = "claude"
+                    s["narrator"] = s["mode"]
                 else:
                     s["notes"].append("Lời diễn giải của LLM chứa số không kiểm chứng được — dùng bản diễn giải tự động.")
             except Exception:
@@ -681,7 +755,7 @@ def infer_meta(columns, types, rows) -> list[dict]:
 def _catalog_label(col: str) -> str:
     """Nhãn thân thiện cho cột của SQL tự do: lấy phần đầu mô tả nghiệp vụ trong catalog (vd ma_kh -> Mã khách hàng)."""
     for t in get_catalog().tables.values():
-        if t["schema"] == "dw" and col in t["columns"] and t["columns"][col].get("description"):
+        if t["schema"] == profile.serving_schema() and col in t["columns"] and t["columns"][col].get("description"):
             d = re.split(r"\s*(?:->|\(|—|:|,)", t["columns"][col]["description"])[0].strip()
             if d and len(d) <= 40:
                 return d
