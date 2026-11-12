@@ -1,0 +1,392 @@
+[
+ {
+  "id": "h01",
+  "question": "Doanh thu gộp tháng 10/2026 là bao nhiêu?",
+  "gold_sql": "SELECT SUM(sl * dg) AS doanh_thu_gop FROM dw.fct_ct_dh WHERE trang_thai <> 'HUY' AND ngay_dh BETWEEN '2026-10-01' AND '2026-10-31'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h02",
+  "question": "tong chiet khau quy 2/2026 la bao nhieu vay",
+  "gold_sql": "SELECT SUM(ck) AS tong_chiet_khau FROM dw.fct_ct_dh WHERE trang_thai = 'HOAN_THANH' AND ngay_dh BETWEEN '2026-04-01' AND '2026-06-30'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h03",
+  "question": "Số đơn hủy theo kênh bán trong tháng 7/2026",
+  "gold_sql": "SELECT k.ten_kenh, COUNT(*) AS so_don_huy FROM dw.fct_dh d JOIN dw.dim_kenh k ON d.ma_kenh = k.ma_kenh WHERE d.trang_thai = 'HUY' AND d.ngay_dh BETWEEN '2026-07-01' AND '2026-07-31' GROUP BY k.ten_kenh",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h04",
+  "question": "Giá trị hàng trả tháng 9/2026?",
+  "gold_sql": "SELECT SUM(tien_hoan) AS gia_tri_tra_hang FROM dw.fct_th WHERE ngay_tra BETWEEN '2026-09-01' AND '2026-09-30'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h05",
+  "question": "Chốt tồn cuối tuần ngày 08/11/2026, Kho Hải Phòng có số lượng tồn kho là bao nhiêu?",
+  "gold_sql": "SELECT SUM(t.sl_ton) AS ton_kho_sl FROM dw.fct_tk_tuan t JOIN dw.dim_kho k ON t.ma_kho = k.ma_kho WHERE t.ngay_chot = '2026-11-08' AND k.ten_kho = 'Kho Hải Phòng'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h06",
+  "question": "Biên lợi nhuận gộp theo loại cửa hàng (Flagship, Tiêu chuẩn, Mini) từ 01/01/2026 đến 30/09/2026 là bao nhiêu?",
+  "gold_sql": "SELECT c.loai_ch, SUM(f.tt - f.tien_tra - (f.sl - f.sl_tra) * f.gia_von) * 100.0 / NULLIF(SUM(f.tt - f.tien_tra), 0) AS bien_ln_gop FROM dw.fct_ct_dh f JOIN dw.dim_cn c ON f.ma_cn = c.ma_cn WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2026-01-01' AND '2026-09-30' GROUP BY c.loai_ch",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h07",
+  "question": "Trong tháng 10/2026, mỗi kênh bán chiếm bao nhiêu % doanh thu thuần?",
+  "gold_sql": "SELECT k.ten_kenh, SUM(f.tt - f.tien_tra) * 100.0 / SUM(SUM(f.tt - f.tien_tra)) OVER () AS ty_trong_pct FROM dw.fct_ct_dh f JOIN dw.dim_kenh k ON f.ma_kenh = k.ma_kenh WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2026-10-01' AND '2026-10-31' GROUP BY k.ten_kenh",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h08",
+  "question": "So sánh số đơn hàng tháng 10/2026 với tháng 9/2026 theo loại cửa hàng giúp mình",
+  "gold_sql": "SELECT c.loai_ch, COUNT(DISTINCT f.ma_dh) FILTER (WHERE f.ngay_dh BETWEEN '2026-10-01' AND '2026-10-31') AS so_don_thang_10, COUNT(DISTINCT f.ma_dh) FILTER (WHERE f.ngay_dh BETWEEN '2026-09-01' AND '2026-09-30') AS so_don_thang_9 FROM dw.fct_ct_dh f JOIN dw.dim_cn c ON f.ma_cn = c.ma_cn WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2026-09-01' AND '2026-10-31' GROUP BY c.loai_ch",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h09",
+  "question": "Top 3 lý do trả hàng có số lượt trả hàng nhiều nhất trong năm 2025",
+  "gold_sql": "SELECT ly_do, COUNT(*) AS so_phieu_tra FROM dw.fct_th WHERE ngay_tra BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY ly_do ORDER BY so_phieu_tra DESC, ly_do LIMIT 3",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h10",
+  "question": "Năm 2025 có bao nhiêu khách hàng định danh mua từ 3 đơn hoàn thành trở lên?",
+  "gold_sql": "SELECT COUNT(*) AS so_khach FROM (SELECT ma_kh FROM dw.fct_ct_dh WHERE trang_thai = 'HOAN_THANH' AND ma_kh IS NOT NULL AND ngay_dh BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY ma_kh HAVING COUNT(DISTINCT ma_dh) >= 3) t",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h11",
+  "question": "Tháng 10/2026, những cửa hàng nào có tỷ lệ hủy đơn cao hơn tỷ lệ hủy chung của cả chuỗi? Cho xem tên cửa hàng và tỷ lệ hủy",
+  "gold_sql": "WITH theo_cn AS (SELECT ma_cn, COUNT(*) FILTER (WHERE trang_thai = 'HUY') * 100.0 / NULLIF(COUNT(*), 0) AS ty_le_huy FROM dw.fct_dh WHERE ngay_dh BETWEEN '2026-10-01' AND '2026-10-31' GROUP BY ma_cn), chung AS (SELECT COUNT(*) FILTER (WHERE trang_thai = 'HUY') * 100.0 / NULLIF(COUNT(*), 0) AS ty_le_huy_chung FROM dw.fct_dh WHERE ngay_dh BETWEEN '2026-10-01' AND '2026-10-31') SELECT c.ten_cn, t.ty_le_huy FROM theo_cn t JOIN dw.dim_cn c ON t.ma_cn = c.ma_cn CROSS JOIN chung WHERE t.ty_le_huy > chung.ty_le_huy_chung",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h12",
+  "question": "Điện thoại chiếm bao nhiêu phần trăm tổng doanh thu thuần năm 2025?",
+  "gold_sql": "SELECT SUM(CASE WHEN n.ten_nh = 'Điện thoại' THEN f.tt - f.tien_tra END) * 100.0 / NULLIF(SUM(f.tt - f.tien_tra), 0) AS ty_trong_dien_thoai_pct FROM dw.fct_ct_dh f LEFT JOIN dw.dim_sp s ON f.ma_sp = s.ma_sp LEFT JOIN dw.dim_nh n ON s.ma_nh = n.ma_nh WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2025-01-01' AND '2025-12-31'",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h13",
+  "question": "Có bao nhiêu mã sản phẩm có bán (đơn hoàn thành) trong năm 2025 nhưng sang tháng 10/2026 không bán được cái nào?",
+  "gold_sql": "SELECT COUNT(DISTINCT ma_sp) AS so_sku FROM dw.fct_ct_dh WHERE trang_thai = 'HOAN_THANH' AND ngay_dh BETWEEN '2025-01-01' AND '2025-12-31' AND ma_sp IS NOT NULL AND ma_sp NOT IN (SELECT DISTINCT ma_sp FROM dw.fct_ct_dh WHERE trang_thai = 'HOAN_THANH' AND ngay_dh BETWEEN '2026-10-01' AND '2026-10-31' AND ma_sp IS NOT NULL)",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h14",
+  "question": "khach dang ky thanh vien tu 01/01/2026 den 31/10/2026 ma co mua hang (don hoan thanh) trong thang 10/2026 thi co bao nhieu nguoi?",
+  "gold_sql": "SELECT COUNT(DISTINCT f.ma_kh) AS so_khach FROM dw.fct_ct_dh f JOIN dw.dim_kh k ON f.ma_kh = k.ma_kh WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2026-10-01' AND '2026-10-31' AND k.ngay_dk BETWEEN '2026-01-01' AND '2026-10-31'",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h15",
+  "question": "Chi phí marketing của kênh Website trong cả năm 2025 (01/01/2025 đến 31/12/2025) là bao nhiêu?",
+  "gold_sql": "SELECT SUM(chi_phi) AS chi_phi_mkt FROM dw.fct_cp_mkt WHERE ma_kenh = 'WEB' AND thang BETWEEN DATE '2025-01-01' AND DATE '2025-12-01'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h16",
+  "question": "gia tri nhap kho theo tung kho trong thang 10/2026 nhe",
+  "gold_sql": "SELECT k.ten_kho, SUM(n.tt_nhap) AS gia_tri_nhap_kho FROM dw.fct_nk n JOIN dw.dim_kho k ON n.ma_kho = k.ma_kho WHERE n.ngay_nk BETWEEN DATE '2026-10-01' AND DATE '2026-10-31' GROUP BY k.ten_kho",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h17",
+  "question": "Số lượt trả hàng theo từng kênh bán trong quý 3/2026 (từ 01/07/2026 đến 30/09/2026)?",
+  "gold_sql": "SELECT k.ten_kenh, COUNT(*) AS so_phieu_tra FROM dw.fct_th r JOIN dw.dim_kenh k ON r.ma_kenh = k.ma_kenh WHERE r.ngay_tra BETWEEN DATE '2026-07-01' AND DATE '2026-09-30' GROUP BY k.ten_kenh",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h19",
+  "question": "3 nhà cung cấp có giá trị nhập kho lớn nhất năm 2025 là những nhà nào? Cho mình tên NCC và giá trị nhập.",
+  "gold_sql": "SELECT c.ten_ncc, SUM(n.tt_nhap) AS gia_tri_nhap_kho FROM dw.fct_nk n JOIN dw.dim_ncc c ON n.ma_ncc = c.ma_ncc WHERE n.ngay_nk BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' GROUP BY c.ten_ncc ORDER BY gia_tri_nhap_kho DESC, c.ten_ncc LIMIT 3",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h20",
+  "question": "So sánh chi phí marketing quý 3/2026 (tháng 7-9/2026) với quý 3/2025 (tháng 7-9/2025) theo từng kênh bán.",
+  "gold_sql": "SELECT k.ten_kenh, SUM(CASE WHEN m.thang BETWEEN DATE '2026-07-01' AND DATE '2026-09-01' THEN m.chi_phi END) AS chi_phi_q3_2026, SUM(CASE WHEN m.thang BETWEEN DATE '2025-07-01' AND DATE '2025-09-01' THEN m.chi_phi END) AS chi_phi_q3_2025 FROM dw.fct_cp_mkt m JOIN dw.dim_kenh k ON m.ma_kenh = k.ma_kenh WHERE m.thang BETWEEN DATE '2026-07-01' AND DATE '2026-09-01' OR m.thang BETWEEN DATE '2025-07-01' AND DATE '2025-09-01' GROUP BY k.ten_kenh",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h21",
+  "question": "ty le huy don theo phuong thuc thanh toan trong thang 10/2026 la bao nhieu?",
+  "gold_sql": "SELECT pttt, COUNT(*) FILTER (WHERE trang_thai = 'HUY') * 100.0 / NULLIF(COUNT(*), 0) AS ty_le_huy FROM dw.fct_dh WHERE ngay_dh BETWEEN DATE '2026-10-01' AND DATE '2026-10-31' GROUP BY pttt",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h22",
+  "question": "Tại ngày chốt tồn 08/11/2026, top 5 nhóm sản phẩm có giá trị tồn kho cao nhất là gì?",
+  "gold_sql": "SELECT s.nhom_sp, SUM(t.gia_tri_ton) AS gia_tri_ton_kho FROM dw.fct_tk_tuan t JOIN dw.dim_sp s ON t.ma_sp = s.ma_sp WHERE t.ngay_chot = DATE '2026-11-08' GROUP BY s.nhom_sp ORDER BY gia_tri_ton_kho DESC, s.nhom_sp LIMIT 5",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h23",
+  "question": "Tháng 10/2026 những cửa hàng nào đạt dưới 90% kế hoạch doanh thu? Cho xem tên cửa hàng và tỷ lệ đạt kế hoạch.",
+  "gold_sql": "WITH tt AS (SELECT ma_cn, SUM(tt - tien_tra) AS dt FROM dw.fct_ct_dh WHERE trang_thai = 'HOAN_THANH' AND ngay_dh BETWEEN DATE '2026-10-01' AND DATE '2026-10-31' GROUP BY ma_cn), kh AS (SELECT ma_cn, SUM(dt_ke_hoach) AS kh FROM dw.fct_kh_dt WHERE thang = DATE '2026-10-01' GROUP BY ma_cn) SELECT c.ten_cn, COALESCE(tt.dt, 0) * 100.0 / NULLIF(kh.kh, 0) AS ty_le_dat_kh FROM kh JOIN dw.dim_cn c ON c.ma_cn = kh.ma_cn LEFT JOIN tt ON tt.ma_cn = kh.ma_cn WHERE COALESCE(tt.dt, 0) * 100.0 / NULLIF(kh.kh, 0) < 90",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h24",
+  "question": "Năm 2025, tính doanh thu thuần của từng khách hàng định danh rồi lấy trung bình theo hạng thành viên. Hạng nào có mức trung bình cao hơn mức trung bình chung của tất cả khách định danh?",
+  "gold_sql": "WITH kh_dt AS (SELECT f.ma_kh, SUM(f.tt - f.tien_tra) AS dt FROM dw.fct_ct_dh f WHERE f.trang_thai = 'HOAN_THANH' AND f.ma_kh IS NOT NULL AND f.ngay_dh BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' GROUP BY f.ma_kh), hang AS (SELECT k.hang_tv, AVG(d.dt) AS dt_tb FROM kh_dt d JOIN dw.dim_kh k ON d.ma_kh = k.ma_kh GROUP BY k.hang_tv) SELECT hang_tv, dt_tb FROM hang WHERE dt_tb > (SELECT AVG(dt) FROM kh_dt)",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h25",
+  "question": "Trong năm 2025, mỗi lý do trả hàng chiếm bao nhiêu phần trăm tổng số tiền hoàn cho khách?",
+  "gold_sql": "SELECT ly_do, SUM(tien_hoan) * 100.0 / SUM(SUM(tien_hoan)) OVER () AS ty_trong_pct FROM dw.fct_th WHERE ngay_tra BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' GROUP BY ly_do",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h26",
+  "question": "Tháng 10/2026 có bao nhiêu nhân viên bán hàng có từ 30 đơn hoàn thành trở lên?",
+  "gold_sql": "SELECT COUNT(*) AS so_nv FROM (SELECT ma_nv FROM dw.fct_dh WHERE trang_thai = 'HOAN_THANH' AND ma_nv IS NOT NULL AND ngay_dh BETWEEN DATE '2026-10-01' AND DATE '2026-10-31' GROUP BY ma_nv HAVING COUNT(DISTINCT ma_dh) >= 30) x",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h27",
+  "question": "nam 2025 co bao nhieu khach dinh danh vua mua o cua hang vua mua online (don hoan thanh)?",
+  "gold_sql": "SELECT COUNT(*) AS so_khach FROM (SELECT f.ma_kh FROM dw.fct_ct_dh f JOIN dw.dim_kenh k ON f.ma_kenh = k.ma_kenh WHERE f.trang_thai = 'HOAN_THANH' AND f.ma_kh IS NOT NULL AND f.ngay_dh BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' GROUP BY f.ma_kh HAVING COUNT(DISTINCT k.nhom_kenh) = 2) x",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h28",
+  "question": "Từ 01/01/2026 đến 09/11/2026 có bao nhiêu mã sản phẩm được nhập kho nhưng không bán được đơn hoàn thành nào trong cùng khoảng thời gian đó?",
+  "gold_sql": "SELECT COUNT(DISTINCT n.ma_sp) AS so_sp FROM dw.fct_nk n WHERE n.ngay_nk BETWEEN DATE '2026-01-01' AND DATE '2026-11-09' AND NOT EXISTS (SELECT 1 FROM dw.fct_ct_dh f WHERE f.ma_sp = n.ma_sp AND f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN DATE '2026-01-01' AND DATE '2026-11-09')",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h29",
+  "question": "Lợi nhuận gộp quý 3/2026 (từ 01/07/2026 đến 30/09/2026) của cả chuỗi là bao nhiêu?",
+  "gold_sql": "SELECT SUM(f.tt - f.tien_tra - (f.sl - f.sl_tra) * f.gia_von) AS loi_nhuan_gop FROM dw.fct_ct_dh f WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2026-07-01' AND '2026-09-30'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h30",
+  "question": "phi van chuyen thu thang 10/2026 la bao nhieu vay",
+  "gold_sql": "SELECT SUM(d.phi_vc) AS phi_van_chuyen FROM dw.fct_dh d WHERE d.trang_thai = 'HOAN_THANH' AND d.ngay_dh BETWEEN '2026-10-01' AND '2026-10-31'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h31",
+  "question": "Chốt tồn ngày 08/11/2026, hàng đang về của từng kho là bao nhiêu?",
+  "gold_sql": "SELECT k.ten_kho, SUM(t.sl_dang_ve) AS hang_dang_ve FROM dw.fct_tk_tuan t JOIN dw.dim_kho k ON t.ma_kho = k.ma_kho WHERE t.ngay_chot = '2026-11-08' GROUP BY k.ten_kho",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h32",
+  "question": "Kế hoạch doanh thu tháng 11/2026 theo loại cửa hàng (Flagship, Tiêu chuẩn, Mini)?",
+  "gold_sql": "SELECT c.loai_ch, SUM(k.dt_ke_hoach) AS ke_hoach_dt FROM dw.fct_kh_dt k JOIN dw.dim_cn c ON k.ma_cn = c.ma_cn WHERE k.thang = '2026-11-01' GROUP BY c.loai_ch",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h33",
+  "question": "Top 5 nhóm sản phẩm có doanh thu thuần cao nhất trong tháng 10/2026 (01/10/2026 - 31/10/2026) là những nhóm nào?",
+  "gold_sql": "SELECT s.nhom_sp, SUM(f.tt - f.tien_tra) AS doanh_thu_thuan FROM dw.fct_ct_dh f JOIN dw.dim_sp s ON f.ma_sp = s.ma_sp WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2026-10-01' AND '2026-10-31' GROUP BY s.nhom_sp ORDER BY doanh_thu_thuan DESC, s.nhom_sp LIMIT 5",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h34",
+  "question": "Giá trị hàng trả tháng 10/2026 so với tháng 9/2026, tách theo lý do trả hàng nhé",
+  "gold_sql": "SELECT r.ly_do, SUM(r.tien_hoan) FILTER (WHERE r.ngay_tra BETWEEN '2026-10-01' AND '2026-10-31') AS gia_tri_tra_thang_10, SUM(r.tien_hoan) FILTER (WHERE r.ngay_tra BETWEEN '2026-09-01' AND '2026-09-30') AS gia_tri_tra_thang_9 FROM dw.fct_th r WHERE r.ngay_tra BETWEEN '2026-09-01' AND '2026-10-31' GROUP BY r.ly_do",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h35",
+  "question": "Năm 2025, mỗi miền (Bắc, Trung, Nam) chiếm bao nhiêu % tổng lợi nhuận gộp của cả chuỗi?",
+  "gold_sql": "SELECT v.ten_vung, SUM(f.tt - f.tien_tra - (f.sl - f.sl_tra) * f.gia_von) * 100.0 / SUM(SUM(f.tt - f.tien_tra - (f.sl - f.sl_tra) * f.gia_von)) OVER () AS ty_trong_loi_nhuan_gop FROM dw.fct_ct_dh f JOIN dw.dim_cn c ON f.ma_cn = c.ma_cn JOIN dw.dim_vung v ON c.ma_vung = v.ma_vung WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY v.ten_vung",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h36",
+  "question": "Tháng 10/2026, top 5 cửa hàng có tỷ lệ đạt kế hoạch doanh thu cao nhất là cửa hàng nào?",
+  "gold_sql": "WITH dt AS (SELECT f.ma_cn, SUM(f.tt - f.tien_tra) AS doanh_thu_thuan FROM dw.fct_ct_dh f WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2026-10-01' AND '2026-10-31' GROUP BY f.ma_cn), kh AS (SELECT k.ma_cn, SUM(k.dt_ke_hoach) AS ke_hoach FROM dw.fct_kh_dt k WHERE k.thang = '2026-10-01' GROUP BY k.ma_cn) SELECT c.ten_cn, dt.doanh_thu_thuan * 100.0 / NULLIF(kh.ke_hoach, 0) AS ty_le_dat_kh FROM kh JOIN dt ON kh.ma_cn = dt.ma_cn JOIN dw.dim_cn c ON c.ma_cn = kh.ma_cn ORDER BY ty_le_dat_kh DESC, c.ma_cn LIMIT 5",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h37",
+  "question": "Có bao nhiêu khách hàng định danh có đơn hoàn thành trong cả năm 2025 và cũng có đơn hoàn thành từ 01/01/2026 đến 09/11/2026?",
+  "gold_sql": "SELECT COUNT(*) AS so_khach FROM (SELECT f.ma_kh FROM dw.fct_ct_dh f WHERE f.trang_thai = 'HOAN_THANH' AND f.ma_kh IS NOT NULL AND f.ngay_dh BETWEEN '2025-01-01' AND '2026-11-09' GROUP BY f.ma_kh HAVING COUNT(*) FILTER (WHERE f.ngay_dh <= '2025-12-31') > 0 AND COUNT(*) FILTER (WHERE f.ngay_dh >= '2026-01-01') > 0) t",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h38",
+  "question": "Tháng 10/2026, tính doanh thu thuần của từng cửa hàng rồi lấy trung bình theo tỉnh/thành của cửa hàng. Tỉnh/thành nào có mức trung bình mỗi cửa hàng cao hơn mức trung bình chung của tất cả cửa hàng?",
+  "gold_sql": "WITH ch AS (SELECT c.tinh_tp, f.ma_cn, SUM(f.tt - f.tien_tra) AS dt FROM dw.fct_ct_dh f JOIN dw.dim_cn c ON f.ma_cn = c.ma_cn WHERE f.trang_thai = 'HOAN_THANH' AND f.ngay_dh BETWEEN '2026-10-01' AND '2026-10-31' GROUP BY c.tinh_tp, f.ma_cn), tb AS (SELECT tinh_tp, AVG(dt) AS dt_tb_moi_cua_hang FROM ch GROUP BY tinh_tp) SELECT tinh_tp, dt_tb_moi_cua_hang FROM tb WHERE dt_tb_moi_cua_hang > (SELECT AVG(dt) FROM ch)",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h39",
+  "question": "Trong giá trị tồn kho tại ngày chốt 08/11/2026 của các sản phẩm đã Ngừng KD, mỗi kho chiếm bao nhiêu phần trăm?",
+  "gold_sql": "SELECT k.ten_kho, SUM(t.gia_tri_ton) * 100.0 / SUM(SUM(t.gia_tri_ton)) OVER () AS ty_trong_gia_tri_ton FROM dw.fct_tk_tuan t JOIN dw.dim_sp s ON t.ma_sp = s.ma_sp JOIN dw.dim_kho k ON t.ma_kho = k.ma_kho WHERE t.ngay_chot = '2026-11-08' AND s.trang_thai_kd = 'Ngừng KD' GROUP BY k.ten_kho",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h40",
+  "question": "thang 10/2026 co bao nhieu don tra gop da hoan thanh, co tu 2 dong san pham tro len va tong thanh tien tu 20 trieu tro len?",
+  "gold_sql": "SELECT COUNT(*) AS so_don FROM dw.fct_dh d WHERE d.trang_thai = 'HOAN_THANH' AND d.pttt = 'Trả góp' AND d.so_dong >= 2 AND d.tong_tt >= 20000000 AND d.ngay_dh BETWEEN '2026-10-01' AND '2026-10-31'",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ }
+]

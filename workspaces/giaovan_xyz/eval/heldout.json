@@ -1,0 +1,392 @@
+[
+ {
+  "id": "h01",
+  "question": "Tổng tiền bồi thường quý 2 năm 2026 (từ 01/04/2026 đến 30/06/2026) là bao nhiêu vậy?",
+  "gold_sql": "SELECT SUM(c.compensation_amount) AS tien_boi_thuong FROM mart.fact_complaint c WHERE c.created_date BETWEEN '2026-04-01' AND '2026-06-30'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h02",
+  "question": "so don hoan thang 3/2026 la bao nhieu",
+  "gold_sql": "SELECT COUNT(*) AS so_don_hoan FROM mart.fact_shipment s WHERE s.status = 'RETURNED' AND s.created_date BETWEEN '2026-03-01' AND '2026-03-31'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h03",
+  "question": "Thời gian xử lý khiếu nại trung bình theo từng loại khiếu nại, tính từ 01/01/2026 đến 31/10/2026",
+  "gold_sql": "SELECT c.complaint_type AS loai_khieu_nai, AVG(c.resolved_hours) AS thoi_gian_xu_ly_kn FROM mart.fact_complaint c WHERE c.created_date BETWEEN '2026-01-01' AND '2026-10-31' GROUP BY c.complaint_type",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h04",
+  "question": "Chi phí vận hành tháng 8/2026 chia theo miền",
+  "gold_sql": "SELECT h.region AS mien, SUM(k.amount) AS chi_phi_van_hanh FROM mart.fact_hub_cost k JOIN mart.dim_hub h ON k.hub_id = h.hub_id WHERE k.month = DATE '2026-08-01' GROUP BY h.region",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h05",
+  "question": "Tỷ lệ giao thành công theo miền phát trong quý 2 năm 2026 (01/04/2026 - 30/06/2026) là bao nhiêu?",
+  "gold_sql": "SELECT h.region AS mien_phat, COUNT(*) FILTER (WHERE s.status = 'DELIVERED') * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status IN ('DELIVERED', 'RETURNED', 'LOST')), 0) AS ty_le_giao_thanh_cong FROM mart.fact_shipment s JOIN mart.dim_hub h ON s.dest_hub_id = h.hub_id WHERE s.created_date BETWEEN '2026-04-01' AND '2026-06-30' GROUP BY h.region",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h06",
+  "question": "Khối lượng hàng (kg) theo dịch vụ: quý 3/2026 (01/07-30/09) so với quý 2/2026 (01/04-30/06) thế nào?",
+  "gold_sql": "SELECT sv.service_name AS dich_vu, SUM(s.weight_kg) FILTER (WHERE s.created_date BETWEEN '2026-07-01' AND '2026-09-30') AS khoi_luong_q3_2026, SUM(s.weight_kg) FILTER (WHERE s.created_date BETWEEN '2026-04-01' AND '2026-06-30') AS khoi_luong_q2_2026 FROM mart.fact_shipment s JOIN mart.dim_service sv ON s.service_code = sv.service_code WHERE s.status <> 'CANCELLED' AND s.created_date BETWEEN '2026-04-01' AND '2026-09-30' GROUP BY sv.service_name",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h07",
+  "question": "Trong năm 2025, mỗi phân khúc khách hàng chiếm bao nhiêu % tổng doanh thu cước ghi nhận?",
+  "gold_sql": "SELECT c.segment AS phan_khuc, SUM(s.shipping_fee) * 100.0 / SUM(SUM(s.shipping_fee)) OVER () AS ty_trong_pct FROM mart.fact_shipment s JOIN mart.dim_customer c ON s.customer_id = c.customer_id WHERE s.status IN ('DELIVERED', 'RETURNED') AND s.created_date BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY c.segment",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h08",
+  "question": "Top 3 bưu cục có tiền bồi thường cao nhất trong 6 tháng đầu năm 2026 (01/01 - 30/06/2026), cho xem tên bưu cục và số tiền",
+  "gold_sql": "SELECT h.hub_name AS buu_cuc, SUM(c.compensation_amount) AS tien_boi_thuong FROM mart.fact_complaint c JOIN mart.dim_hub h ON c.hub_id = h.hub_id WHERE c.created_date BETWEEN '2026-01-01' AND '2026-06-30' GROUP BY h.hub_id, h.hub_name ORDER BY tien_boi_thuong DESC, h.hub_id LIMIT 3",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h09",
+  "question": "Lợi nhuận vận hành tháng 9/2026 của từng miền là bao nhiêu?",
+  "gold_sql": "WITH r AS (SELECT h.region, SUM(s.shipping_fee) AS rev FROM mart.fact_shipment s JOIN mart.dim_hub h ON s.origin_hub_id = h.hub_id WHERE s.status IN ('DELIVERED', 'RETURNED') AND s.created_date BETWEEN '2026-09-01' AND '2026-09-30' GROUP BY h.region), c AS (SELECT h.region, SUM(k.amount) AS cost FROM mart.fact_hub_cost k JOIN mart.dim_hub h ON k.hub_id = h.hub_id WHERE k.month = DATE '2026-09-01' GROUP BY h.region) SELECT COALESCE(r.region, c.region) AS mien, COALESCE(r.rev, 0) - COALESCE(c.cost, 0) AS loi_nhuan_van_hanh FROM r FULL JOIN c ON r.region = c.region",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h10",
+  "question": "Năm 2025 (01/01-31/12/2025) có bao nhiêu khách hàng gửi hơn 50 vận đơn (số vận đơn, không tính đơn hủy)?",
+  "gold_sql": "SELECT COUNT(*) AS so_khach_hang FROM (SELECT s.customer_id FROM mart.fact_shipment s WHERE s.status <> 'CANCELLED' AND s.created_date BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY s.customer_id HAVING COUNT(*) > 50) t",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h11",
+  "question": "Có bao nhiêu khách thuộc phân khúc Shop online có ít nhất 30 đơn đã kết thúc (giao thành công, hoàn hoặc thất lạc) trong năm 2025 mà tỷ lệ hoàn của họ cao hơn 8%?",
+  "gold_sql": "SELECT COUNT(*) AS so_khach_hang FROM (SELECT s.customer_id FROM mart.fact_shipment s JOIN mart.dim_customer c ON s.customer_id = c.customer_id WHERE c.segment = 'Shop online' AND s.created_date BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY s.customer_id HAVING COUNT(*) FILTER (WHERE s.status IN ('DELIVERED', 'RETURNED', 'LOST')) >= 30 AND COUNT(*) FILTER (WHERE s.status = 'RETURNED') * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status IN ('DELIVERED', 'RETURNED', 'LOST')), 0) > 8) t",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h12",
+  "question": "Từ 01/01/2026 đến 31/10/2026, tỉnh/thành của bưu cục gửi nào có cước trung bình mỗi đơn cao hơn mức cước trung bình mỗi đơn chung của cả công ty?",
+  "gold_sql": "WITH t AS (SELECT h.province, s.shipping_fee FROM mart.fact_shipment s JOIN mart.dim_hub h ON s.origin_hub_id = h.hub_id WHERE s.status IN ('DELIVERED', 'RETURNED') AND s.created_date BETWEEN '2026-01-01' AND '2026-10-31') SELECT province AS tinh, AVG(shipping_fee) AS cuoc_tb FROM t GROUP BY province HAVING AVG(shipping_fee) > (SELECT AVG(shipping_fee) FROM t)",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h13",
+  "question": "Khiếu nại loại Thất lạc chiếm bao nhiêu phần trăm tổng số khiếu nại từ 01/01/2026 đến 31/10/2026?",
+  "gold_sql": "SELECT COUNT(*) FILTER (WHERE c.complaint_type = 'Thất lạc') * 100.0 / NULLIF(COUNT(*), 0) AS ty_le_that_lac_pct FROM mart.fact_complaint c WHERE c.created_date BETWEEN '2026-01-01' AND '2026-10-31'",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h14",
+  "question": "top 5 ma khach hang co tien thu ho cao nhat quy 4/2025 (01/10 - 31/12/2025)",
+  "gold_sql": "SELECT s.customer_id, SUM(s.cod_amount) AS tien_thu_ho FROM mart.fact_shipment s WHERE s.status = 'DELIVERED' AND s.created_date BETWEEN '2025-10-01' AND '2025-12-31' GROUP BY s.customer_id ORDER BY tien_thu_ho DESC, s.customer_id LIMIT 5",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h15",
+  "question": "Số khiếu nại tiếp nhận trong tháng 7/2026 (từ 01/07/2026 đến 31/07/2026) là bao nhiêu?",
+  "gold_sql": "SELECT COUNT(*) AS so_khieu_nai FROM mart.fact_complaint c WHERE c.created_date BETWEEN DATE '2026-07-01' AND DATE '2026-07-31'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h16",
+  "question": "cuoc phat sinh quy 1/2026 (01/01 den 31/03/2026) la bao nhieu vay",
+  "gold_sql": "SELECT SUM(s.shipping_fee) AS cuoc_phat_sinh FROM mart.fact_shipment s WHERE s.status <> 'CANCELLED' AND s.created_date BETWEEN DATE '2026-01-01' AND DATE '2026-03-31'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h17",
+  "question": "Thời gian giao trung bình theo từng dịch vụ trong tháng 5/2026 (01/05 - 31/05/2026)?",
+  "gold_sql": "SELECT sv.service_name, AVG(s.delivery_hours) AS thoi_gian_giao_tb FROM mart.fact_shipment s JOIN mart.dim_service sv ON s.service_code = sv.service_code WHERE s.status = 'DELIVERED' AND s.created_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31' GROUP BY sv.service_name",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h18",
+  "question": "Chi phí vận hành theo loại bưu cục (bưu cục / trung tâm chia chọn) từ tháng 01/2026 đến tháng 10/2026?",
+  "gold_sql": "SELECT h.hub_type, SUM(k.amount) AS chi_phi_van_hanh FROM mart.fact_hub_cost k JOIN mart.dim_hub h ON k.hub_id = h.hub_id WHERE k.month BETWEEN DATE '2026-01-01' AND DATE '2026-10-01' GROUP BY h.hub_type",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h19",
+  "question": "Tháng 12/2025 (01/12 - 31/12/2025) khách Doanh nghiệp có bao nhiêu đơn giao thành công?",
+  "gold_sql": "SELECT COUNT(*) AS so_don_giao_thanh_cong FROM mart.fact_shipment s JOIN mart.dim_customer c ON s.customer_id = c.customer_id WHERE s.status = 'DELIVERED' AND c.segment = 'Doanh nghiệp' AND s.created_date BETWEEN DATE '2025-12-01' AND DATE '2025-12-31'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h20",
+  "question": "Cước phát sinh theo phân khúc khách hàng: tháng 10/2026 so với tháng 10/2025 thì thế nào?",
+  "gold_sql": "SELECT c.segment, SUM(s.shipping_fee) FILTER (WHERE s.created_date BETWEEN DATE '2026-10-01' AND DATE '2026-10-31') AS cuoc_phat_sinh_10_2026, SUM(s.shipping_fee) FILTER (WHERE s.created_date BETWEEN DATE '2025-10-01' AND DATE '2025-10-31') AS cuoc_phat_sinh_10_2025 FROM mart.fact_shipment s JOIN mart.dim_customer c ON s.customer_id = c.customer_id WHERE s.status <> 'CANCELLED' AND (s.created_date BETWEEN DATE '2026-10-01' AND DATE '2026-10-31' OR s.created_date BETWEEN DATE '2025-10-01' AND DATE '2025-10-31') GROUP BY c.segment",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h21",
+  "question": "Top 3 tỉnh/thành phát có tỷ lệ hoàn cao nhất từ 01/01/2026 đến 31/10/2026, cho xem tên tỉnh và tỷ lệ hoàn",
+  "gold_sql": "SELECT h.province, COUNT(*) FILTER (WHERE s.status = 'RETURNED') * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status IN ('DELIVERED', 'RETURNED', 'LOST')), 0) AS ty_le_hoan FROM mart.fact_shipment s JOIN mart.dim_hub h ON s.dest_hub_id = h.hub_id WHERE s.created_date BETWEEN DATE '2026-01-01' AND DATE '2026-10-31' GROUP BY h.province ORDER BY ty_le_hoan DESC NULLS LAST, h.province LIMIT 3",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h22",
+  "question": "Trong năm 2025, mỗi dịch vụ chiếm bao nhiêu % tổng số vận đơn?",
+  "gold_sql": "SELECT sv.service_name, COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () AS ty_trong_phan_tram FROM mart.fact_shipment s JOIN mart.dim_service sv ON s.service_code = sv.service_code WHERE s.status <> 'CANCELLED' AND s.created_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' GROUP BY sv.service_name",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h23",
+  "question": "Tỷ lệ khiếu nại của từng tháng trong quý 3/2026 (01/07/2026 - 30/09/2026) là bao nhiêu?",
+  "gold_sql": "WITH s AS (SELECT date_trunc('month', created_date) AS thang, COUNT(*) AS so_van_don FROM mart.fact_shipment WHERE status <> 'CANCELLED' AND created_date BETWEEN DATE '2026-07-01' AND DATE '2026-09-30' GROUP BY 1), c AS (SELECT date_trunc('month', created_date) AS thang, COUNT(*) AS so_khieu_nai FROM mart.fact_complaint WHERE created_date BETWEEN DATE '2026-07-01' AND DATE '2026-09-30' GROUP BY 1) SELECT STRFTIME(s.thang, '%Y-%m') AS thang, COALESCE(c.so_khieu_nai, 0) * 100.0 / NULLIF(s.so_van_don, 0) AS ty_le_khieu_nai FROM s LEFT JOIN c ON s.thang = c.thang",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h24",
+  "question": "Từ 01/01/2026 đến 31/10/2026, có bao nhiêu khách hàng có đơn bị khiếu nại (tính theo ngày khiếu nại)?",
+  "gold_sql": "SELECT COUNT(DISTINCT s.customer_id) AS so_khach_hang FROM mart.fact_complaint c JOIN mart.fact_shipment s ON c.shipment_id = s.shipment_id WHERE c.created_date BETWEEN DATE '2026-01-01' AND DATE '2026-10-31'",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h25",
+  "question": "Năm 2025, những bưu cục nào có thời gian xử lý khiếu nại trung bình cao hơn mức trung bình chung của toàn công ty? Cho xem tên bưu cục và số giờ trung bình.",
+  "gold_sql": "SELECT h.hub_name, AVG(c.resolved_hours) AS thoi_gian_xu_ly_kn FROM mart.fact_complaint c JOIN mart.dim_hub h ON c.hub_id = h.hub_id WHERE c.created_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' GROUP BY h.hub_id, h.hub_name HAVING AVG(c.resolved_hours) > (SELECT AVG(resolved_hours) FROM mart.fact_complaint WHERE created_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31')",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h26",
+  "question": "Miền nào chiếm bao nhiêu phần trăm tổng chi phí vận hành năm 2025 (tháng 01/2025 đến tháng 12/2025)?",
+  "gold_sql": "SELECT h.region, SUM(k.amount) * 100.0 / SUM(SUM(k.amount)) OVER () AS ty_trong_phan_tram FROM mart.fact_hub_cost k JOIN mart.dim_hub h ON k.hub_id = h.hub_id WHERE k.month BETWEEN DATE '2025-01-01' AND DATE '2025-12-01' GROUP BY h.region",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h27",
+  "question": "Quý 1/2026 (01/01 - 31/03/2026) có bao nhiêu đơn Hỏa tốc đi tuyến Liên miền được giao thành công nhưng bị trễ hạn?",
+  "gold_sql": "SELECT COUNT(*) AS so_don FROM mart.fact_shipment s WHERE s.status = 'DELIVERED' AND s.on_time = FALSE AND s.service_code = 'SDD' AND s.route_type = 'Liên miền' AND s.created_date BETWEEN DATE '2026-01-01' AND DATE '2026-03-31'",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h28",
+  "question": "top 5 khach hang thuoc phan khuc Doanh nghiep co doanh thu cuoc ghi nhan cao nhat tu 01/01/2026 den 31/10/2026, cho xem ma khach hang va so tien",
+  "gold_sql": "SELECT s.customer_id, SUM(s.shipping_fee) AS doanh_thu_cuoc FROM mart.fact_shipment s JOIN mart.dim_customer c ON s.customer_id = c.customer_id WHERE s.status IN ('DELIVERED', 'RETURNED') AND c.segment = 'Doanh nghiệp' AND s.created_date BETWEEN DATE '2026-01-01' AND DATE '2026-10-31' GROUP BY s.customer_id ORDER BY doanh_thu_cuoc DESC, s.customer_id LIMIT 5",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h29",
+  "question": "Tiền thu hộ quý 1/2026 (01/01 - 31/03/2026) tổng là bao nhiêu?",
+  "gold_sql": "SELECT SUM(s.cod_amount) AS tien_thu_ho FROM mart.fact_shipment s WHERE s.status = 'DELIVERED' AND s.created_date BETWEEN '2026-01-01' AND '2026-03-31'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h30",
+  "question": "ty le giao dung han thang 7/2026 (01/07 - 31/07/2026) bao nhieu %",
+  "gold_sql": "SELECT COUNT(*) FILTER (WHERE s.status = 'DELIVERED' AND s.on_time) * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status = 'DELIVERED'), 0) AS ty_le_dung_han FROM mart.fact_shipment s WHERE s.created_date BETWEEN '2026-07-01' AND '2026-07-31'",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h31",
+  "question": "Cước trung bình mỗi đơn chia theo người trả cước, năm 2025 (01/01 - 31/12/2025)?",
+  "gold_sql": "SELECT s.payer, AVG(s.shipping_fee) AS cuoc_tb FROM mart.fact_shipment s WHERE s.status IN ('DELIVERED', 'RETURNED') AND s.created_date BETWEEN '2025-01-01' AND '2025-12-31' GROUP BY s.payer",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h32",
+  "question": "Chi phí vận hành tháng 3/2026 của từng tỉnh/thành là bao nhiêu?",
+  "gold_sql": "SELECT h.province, SUM(k.amount) AS chi_phi_van_hanh FROM mart.fact_hub_cost k JOIN mart.dim_hub h ON k.hub_id = h.hub_id WHERE k.month = '2026-03-01' GROUP BY h.province",
+  "difficulty": "easy",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h33",
+  "question": "Top 5 tỉnh/thành gửi có khối lượng hàng (kg) cao nhất từ 01/01/2026 đến 31/10/2026, cho xem tên tỉnh và số kg",
+  "gold_sql": "SELECT h.province, SUM(s.weight_kg) AS khoi_luong FROM mart.fact_shipment s JOIN mart.dim_hub h ON s.origin_hub_id = h.hub_id WHERE s.status <> 'CANCELLED' AND s.created_date BETWEEN '2026-01-01' AND '2026-10-31' GROUP BY h.province ORDER BY khoi_luong DESC, h.province LIMIT 5",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h34",
+  "question": "Số đơn hoàn theo từng dịch vụ: tháng 10/2026 (01/10 - 31/10) so với tháng 9/2026 (01/09 - 30/09) thế nào?",
+  "gold_sql": "SELECT d.service_name, COUNT(*) FILTER (WHERE s.created_date BETWEEN '2026-10-01' AND '2026-10-31') AS so_don_hoan_t10, COUNT(*) FILTER (WHERE s.created_date BETWEEN '2026-09-01' AND '2026-09-30') AS so_don_hoan_t9 FROM mart.fact_shipment s JOIN mart.dim_service d ON s.service_code = d.service_code WHERE s.status = 'RETURNED' AND s.created_date BETWEEN '2026-09-01' AND '2026-10-31' GROUP BY d.service_name",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h35",
+  "question": "Ở Miền Bắc, từ tháng 01/2026 đến tháng 10/2026, mỗi loại chi phí chiếm bao nhiêu % tổng chi phí vận hành?",
+  "gold_sql": "SELECT k.cost_type, SUM(k.amount) * 100.0 / SUM(SUM(k.amount)) OVER () AS ty_trong_pct FROM mart.fact_hub_cost k JOIN mart.dim_hub h ON k.hub_id = h.hub_id WHERE h.region = 'Miền Bắc' AND k.month BETWEEN '2026-01-01' AND '2026-10-01' GROUP BY k.cost_type",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h36",
+  "question": "tỷ lệ hoàn của khách Doanh nghiệp theo loại tuyến, quý 3/2026 (01/07 - 30/09/2026)",
+  "gold_sql": "SELECT s.route_type, COUNT(*) FILTER (WHERE s.status = 'RETURNED') * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status IN ('DELIVERED', 'RETURNED', 'LOST')), 0) AS ty_le_hoan FROM mart.fact_shipment s JOIN mart.dim_customer c ON s.customer_id = c.customer_id WHERE c.segment = 'Doanh nghiệp' AND s.created_date BETWEEN '2026-07-01' AND '2026-09-30' GROUP BY s.route_type",
+  "difficulty": "medium",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h37",
+  "question": "Từ 01/01/2026 đến 31/10/2026, có bao nhiêu khách hàng vừa có đơn giao thành công vừa có đơn bị hoàn (tính theo ngày tạo đơn)?",
+  "gold_sql": "SELECT COUNT(*) AS so_khach FROM (SELECT s.customer_id FROM mart.fact_shipment s WHERE s.created_date BETWEEN '2026-01-01' AND '2026-10-31' GROUP BY s.customer_id HAVING COUNT(*) FILTER (WHERE s.status = 'DELIVERED') > 0 AND COUNT(*) FILTER (WHERE s.status = 'RETURNED') > 0) t",
+  "difficulty": "extra",
+  "split": "test",
+  "tags": [
+   "free"
+  ]
+ },
+ {
+  "id": "h38",
+  "question": "Năm 2026 (01/01 - 31/10/2026), những tỉnh/thành phát nào có tỷ lệ giao đúng hạn thấp hơn tỷ lệ giao đúng hạn chung của cả công ty? Cho xem tên tỉnh và tỷ lệ.",
+  "gold_sql": "WITH p AS (SELECT h.province, COUNT(*) FILTER (WHERE s.status = 'DELIVERED' AND s.on_time) * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status = 'DELIVERED'), 0) AS ty_le FROM mart.fact_shipment s JOIN mart.dim_hub h ON s.dest_hub_id = h.hub_id WHERE s.created_date BETWEEN '2026-01-01' AND '2026-10-31' GROUP BY h.province), o AS (SELECT COUNT(*) FILTER (WHERE s.status = 'DELIVERED' AND s.on_time) * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status = 'DELIVERED'), 0) AS ty_le FROM mart.fact_shipment s WHERE s.created_date BETWEEN '2026-01-01' AND '2026-10-31') SELECT p.province, p.ty_le AS ty_le_dung_han FROM p, o WHERE p.ty_le < o.ty_le",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ },
+ {
+  "id": "h39",
+  "question": "Chỉ tính khách có ngành hàng, trong quý 4/2025 (01/10 - 31/12/2025) mỗi ngành hàng chiếm bao nhiêu % tổng tiền thu hộ?",
+  "gold_sql": "SELECT c.industry, SUM(s.cod_amount) * 100.0 / SUM(SUM(s.cod_amount)) OVER () AS ty_trong_pct FROM mart.fact_shipment s JOIN mart.dim_customer c ON s.customer_id = c.customer_id WHERE s.status = 'DELIVERED' AND c.industry IS NOT NULL AND s.created_date BETWEEN '2025-10-01' AND '2025-12-31' GROUP BY c.industry",
+  "difficulty": "hard",
+  "split": "test",
+  "tags": [
+   "in_layer"
+  ]
+ }
+]
