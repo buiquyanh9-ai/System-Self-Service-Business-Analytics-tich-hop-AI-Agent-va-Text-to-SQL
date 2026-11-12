@@ -1,0 +1,44 @@
+# Kiểm tra tự động mỗi lần đẩy mã: (1) bộ test, (2) build image Docker rồi chạy thử container như khi deploy.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Sinh dữ liệu giả của hai doanh nghiệp mẫu
+        run: |
+          python warehouse/generate.py && python warehouse/build.py
+          python workspaces/giaovan_xyz/warehouse/generate.py
+          python -m app.onboard giaovan_xyz --stats
+      - run: python -m pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t data01 .
+      - name: Chạy thử hai doanh nghiệp ở chế độ không cần khóa API
+        run: |
+          docker run -d --name abc -p 8000:8000 -e APP_SECRET=ci-secret -e PASSWORD_ADMIN=ci-admin -e LLM_MODE=offline data01
+          docker run -d --name xyz -p 8001:8000 -e APP_SECRET=ci-secret -e PASSWORD_ADMIN=ci-admin -e LLM_MODE=offline -e WORKSPACE=giaovan_xyz data01
+          for port in 8000 8001; do
+            for i in $(seq 1 60); do curl -fsS "http://127.0.0.1:$port/api/health" && break || sleep 2; done
+            echo
+          done
+          python3 .github/workflows/smoke.py 8000 "Doanh thu thuần theo miền tháng 10/2026"
+          python3 .github/workflows/smoke.py 8001 "Tỷ lệ giao đúng hạn theo miền tháng 10/2026"
+      - name: Bộ nhớ container sau khi trả lời
+        if: always()
+        run: docker stats --no-stream --format "{{.Name}}: {{.MemUsage}}" && docker logs abc 2>&1 | tail -20
