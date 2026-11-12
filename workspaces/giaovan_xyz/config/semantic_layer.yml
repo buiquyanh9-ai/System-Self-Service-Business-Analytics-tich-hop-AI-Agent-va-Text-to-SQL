@@ -1,0 +1,313 @@
+# =====================================================================================
+# TẦNG NGỮ NGHĨA — Công ty CP Giao vận XYZ. Nguồn sự thật duy nhất về định nghĩa chỉ số.
+# Khung (model, đường join, cột phân loại) do `python -m app.onboard` nhận diện; nhãn, từ đồng nghĩa,
+# công thức, bộ lọc trạng thái và thuật ngữ mơ hồ được viết tay theo nghiệp vụ chuyển phát.
+# Quy ước: bí danh `hub` luôn là bưu cục GỬI (với vận đơn), bưu cục tiếp nhận (với khiếu nại),
+# bưu cục chịu chi phí (với chi phí). Bưu cục PHÁT của vận đơn dùng bí danh `dest_hub`.
+# =====================================================================================
+version: 1
+
+models:
+  van_don:
+    label: Vận đơn
+    table: mart.fact_shipment
+    alias: s
+    time_column: s.created_date
+    time_grain_min: day
+    grain: "1 dòng = 1 vận đơn"
+    joins:
+      hub:      {table: mart.dim_hub,      on: "s.origin_hub_id = hub.hub_id"}
+      dest_hub: {table: mart.dim_hub,      on: "s.dest_hub_id = dest_hub.hub_id"}
+      customer: {table: mart.dim_customer, on: "s.customer_id = customer.customer_id"}
+      service:  {table: mart.dim_service,  on: "s.service_code = service.service_code"}
+
+  khieu_nai:
+    label: Khiếu nại
+    table: mart.fact_complaint
+    alias: c
+    time_column: c.created_date
+    time_grain_min: day
+    grain: "1 dòng = 1 khiếu nại về 1 vận đơn"
+    joins:
+      hub: {table: mart.dim_hub, on: "c.hub_id = hub.hub_id"}
+
+  chi_phi:
+    label: Chi phí vận hành bưu cục
+    table: mart.fact_hub_cost
+    alias: k
+    time_column: k.month
+    time_grain_min: month
+    grain: "1 dòng = 1 khoản mục chi phí của 1 bưu cục trong 1 tháng"
+    joins:
+      hub: {table: mart.dim_hub, on: "k.hub_id = hub.hub_id"}
+
+dimensions:
+  ngay:  {label: Ngày,  kind: time, grain: day,     synonyms: [ngày, theo ngày, hằng ngày, mỗi ngày]}
+  tuan:  {label: Tuần,  kind: time, grain: week,    synonyms: [tuần, theo tuần, hằng tuần, mỗi tuần]}
+  thang: {label: Tháng, kind: time, grain: month,   synonyms: [tháng, theo tháng, hằng tháng, mỗi tháng, từng tháng]}
+  quy:   {label: Quý,   kind: time, grain: quarter, synonyms: [quý, theo quý, từng quý]}
+  nam:   {label: Năm,   kind: time, grain: year,    synonyms: [năm, theo năm, từng năm]}
+  # ---- mạng lưới (bưu cục gửi)
+  mien:         {label: Miền,              expr: hub.region,    synonyms: [miền, vùng, vùng miền, khu vực, miền gửi, region]}
+  tinh:         {label: Tỉnh/Thành,        expr: hub.province,  synonyms: [tỉnh, thành phố, tỉnh thành, tỉnh/thành, tỉnh gửi, địa phương]}
+  buu_cuc:      {label: Bưu cục,           expr: hub.hub_name,  synonyms: [bưu cục, điểm gửi, điểm giao nhận, hub]}
+  loai_buu_cuc: {label: Loại bưu cục,      expr: hub.hub_type,  synonyms: [loại bưu cục, loại điểm]}
+  # ---- nơi phát hàng (chỉ có ở vận đơn)
+  mien_phat:    {label: Miền phát,         expr: dest_hub.region,   synonyms: [miền phát, miền nhận, miền đến, miền giao tới]}
+  tinh_phat:    {label: Tỉnh/Thành phát,   expr: dest_hub.province, synonyms: [tỉnh phát, tỉnh nhận, tỉnh đến, tỉnh giao tới]}
+  # ---- dịch vụ & khách hàng
+  dich_vu:      {label: Dịch vụ,           expr: service.service_name, synonyms: [dịch vụ, gói dịch vụ, loại dịch vụ, gói cước]}
+  phan_khuc:    {label: Phân khúc khách hàng, expr: customer.segment,  synonyms: [phân khúc, phân khúc khách hàng, nhóm khách hàng, loại khách hàng, đối tượng khách hàng]}
+  nganh_kh:     {label: Ngành hàng của khách, expr: customer.industry, synonyms: [ngành hàng, ngành hàng của khách, lĩnh vực kinh doanh]}
+  # ---- thuộc tính vận đơn
+  tuyen:        {label: Loại tuyến,        expr: s.route_type,  synonyms: [loại tuyến, tuyến, nội miền hay liên miền]}
+  trang_thai:   {label: Trạng thái vận đơn, expr: s.status,     synonyms: [trạng thái, trạng thái vận đơn, tình trạng đơn]}
+  nguoi_tra_cuoc: {label: Người trả cước,  expr: s.payer,       synonyms: [người trả cước, bên trả cước, ai trả cước]}
+  # ---- riêng theo model
+  loai_khieu_nai: {label: Loại khiếu nại,  expr: c.complaint_type, synonyms: [loại khiếu nại, lý do khiếu nại, nguyên nhân khiếu nại]}
+  loai_chi_phi:   {label: Loại chi phí,    expr: k.cost_type,      synonyms: [loại chi phí, khoản mục chi phí, khoản mục]}
+
+metrics:
+  so_van_don:
+    label: Số vận đơn
+    model: van_don
+    sql: "COUNT(*)"
+    filter: "s.status <> 'CANCELLED'"
+    format: number
+    owner: Khối Vận hành
+    description: "Số vận đơn đã nhận từ khách theo ngày tạo, không tính đơn hủy trước khi lấy hàng."
+    synonyms: [số vận đơn, số đơn, số đơn hàng, lượng đơn, sản lượng đơn, bao nhiêu đơn, số kiện, số bưu gửi]
+  so_don_giao_thanh_cong:
+    label: Số đơn giao thành công
+    model: van_don
+    sql: "COUNT(*)"
+    filter: "s.status = 'DELIVERED'"
+    format: number
+    owner: Khối Vận hành
+    description: "Số vận đơn đã giao tới người nhận."
+    synonyms: [số đơn giao thành công, đơn giao thành công, số đơn đã giao, số đơn phát thành công]
+  so_don_hoan:
+    label: Số đơn hoàn
+    model: van_don
+    sql: "COUNT(*)"
+    filter: "s.status = 'RETURNED'"
+    format: number
+    owner: Khối Vận hành
+    description: "Số vận đơn phát không thành công, phải hoàn về người gửi."
+    synonyms: [số đơn hoàn, đơn hoàn, đơn bị hoàn, đơn chuyển hoàn, số đơn trả về]
+  ty_le_giao_thanh_cong:
+    label: Tỷ lệ giao thành công (%)
+    model: van_don
+    sql: "COUNT(*) FILTER (WHERE s.status = 'DELIVERED') * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status IN ('DELIVERED', 'RETURNED', 'LOST')), 0)"
+    format: percent
+    additive: false
+    owner: Khối Vận hành
+    description: "Đơn giao thành công / tổng đơn đã kết thúc (giao, hoàn hoặc thất lạc) × 100. Đơn hủy và đơn đang vận chuyển không nằm trong mẫu số."
+    synonyms: [tỷ lệ giao thành công, tỉ lệ giao thành công, tỷ lệ phát thành công, tỷ lệ thành công]
+  ty_le_dung_han:
+    label: Tỷ lệ giao đúng hạn (%)
+    model: van_don
+    sql: "COUNT(*) FILTER (WHERE s.status = 'DELIVERED' AND s.on_time) * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status = 'DELIVERED'), 0)"
+    format: percent
+    additive: false
+    owner: Khối Vận hành
+    description: "Trong các đơn giao thành công, tỷ lệ đơn giao trong thời gian cam kết của dịch vụ × 100."
+    synonyms: [tỷ lệ giao đúng hạn, tỉ lệ giao đúng hạn, tỷ lệ đúng hạn, tỷ lệ đúng cam kết, tỷ lệ đúng hẹn, on-time rate]
+  ty_le_hoan:
+    label: Tỷ lệ hoàn (%)
+    model: van_don
+    sql: "COUNT(*) FILTER (WHERE s.status = 'RETURNED') * 100.0 / NULLIF(COUNT(*) FILTER (WHERE s.status IN ('DELIVERED', 'RETURNED', 'LOST')), 0)"
+    format: percent
+    additive: false
+    owner: Khối Vận hành
+    description: "Đơn hoàn / tổng đơn đã kết thúc × 100."
+    synonyms: [tỷ lệ hoàn, tỉ lệ hoàn, tỷ lệ hoàn hàng, tỷ lệ chuyển hoàn, tỷ lệ đơn hoàn]
+  thoi_gian_giao_tb:
+    label: Thời gian giao trung bình (giờ)
+    model: van_don
+    sql: "AVG(s.delivery_hours)"
+    filter: "s.status = 'DELIVERED'"
+    format: number
+    additive: false
+    owner: Khối Vận hành
+    description: "Số giờ trung bình từ lúc nhận hàng đến lúc giao thành công."
+    synonyms: [thời gian giao trung bình, thời gian giao hàng trung bình, thời gian giao hàng, giao mất bao lâu, số giờ giao trung bình]
+  doanh_thu_cuoc:
+    label: Doanh thu cước ghi nhận
+    model: van_don
+    sql: "SUM(s.shipping_fee)"
+    filter: "s.status IN ('DELIVERED', 'RETURNED')"
+    format: currency
+    owner: Phòng Kế toán
+    description: "Cước của các vận đơn đã kết thúc (giao thành công hoặc hoàn; đơn hoàn vẫn tính cước). Định nghĩa chính thức cho báo cáo tài chính."
+    synonyms: [doanh thu cước ghi nhận, doanh thu cước, cước ghi nhận, doanh thu ghi nhận, cước thực thu, doanh thu kế toán]
+  cuoc_phat_sinh:
+    label: Cước phát sinh
+    model: van_don
+    sql: "SUM(s.shipping_fee)"
+    filter: "s.status <> 'CANCELLED'"
+    format: currency
+    owner: Phòng Kinh doanh
+    description: "Tổng cước của mọi vận đơn đã nhận, gồm cả đơn đang vận chuyển và đơn thất lạc. Phòng Kinh doanh dùng để đo sức bán."
+    synonyms: [cước phát sinh, doanh số cước, tổng cước, doanh thu phát sinh, doanh số]
+  cuoc_tb:
+    label: Cước trung bình mỗi đơn
+    model: van_don
+    sql: "AVG(s.shipping_fee)"
+    filter: "s.status IN ('DELIVERED', 'RETURNED')"
+    format: currency
+    additive: false
+    owner: Phòng Kinh doanh
+    description: "Cước bình quân của một vận đơn đã kết thúc."
+    synonyms: [cước trung bình mỗi đơn, cước trung bình, cước bình quân, giá cước trung bình]
+  tien_thu_ho:
+    label: Tiền thu hộ
+    model: van_don
+    sql: "SUM(s.cod_amount)"
+    filter: "s.status = 'DELIVERED'"
+    format: currency
+    owner: Phòng Kế toán
+    description: "Tổng tiền thu hộ (COD) của các đơn đã giao thành công."
+    synonyms: [tiền thu hộ, thu hộ, tiền cod, cod]
+  khoi_luong:
+    label: Khối lượng hàng (kg)
+    model: van_don
+    sql: "SUM(s.weight_kg)"
+    filter: "s.status <> 'CANCELLED'"
+    format: number
+    owner: Khối Vận hành
+    description: "Tổng khối lượng (kg) của các vận đơn đã nhận, không tính đơn hủy."
+    synonyms: [khối lượng hàng, khối lượng, trọng lượng, tổng số kg, số kg]
+  so_khieu_nai:
+    label: Số khiếu nại
+    model: khieu_nai
+    sql: "COUNT(*)"
+    format: number
+    owner: Phòng Chăm sóc khách hàng
+    description: "Số khiếu nại tiếp nhận theo ngày khiếu nại."
+    synonyms: [số khiếu nại, số lượt khiếu nại, lượt khiếu nại, số phản ánh]
+  tien_boi_thuong:
+    label: Tiền bồi thường
+    model: khieu_nai
+    sql: "SUM(c.compensation_amount)"
+    format: currency
+    owner: Phòng Chăm sóc khách hàng
+    description: "Tổng tiền bồi thường cho khách theo ngày khiếu nại."
+    synonyms: [tiền bồi thường, bồi thường, tiền đền bù, đền bù]
+  thoi_gian_xu_ly_kn:
+    label: Thời gian xử lý khiếu nại trung bình (giờ)
+    model: khieu_nai
+    sql: "AVG(c.resolved_hours)"
+    format: number
+    additive: false
+    owner: Phòng Chăm sóc khách hàng
+    description: "Số giờ trung bình từ lúc tiếp nhận đến lúc xử lý xong một khiếu nại."
+    synonyms: [thời gian xử lý khiếu nại, xử lý khiếu nại mất bao lâu]
+  ty_le_khieu_nai:
+    label: Tỷ lệ khiếu nại (%)
+    type: derived
+    expr: "{so_khieu_nai} * 100.0 / NULLIF({so_van_don}, 0)"
+    format: percent
+    owner: Phòng Chăm sóc khách hàng
+    description: "Số khiếu nại trong kỳ / số vận đơn tạo trong kỳ × 100 (khiếu nại tính theo ngày khiếu nại)."
+    synonyms: [tỷ lệ khiếu nại, tỉ lệ khiếu nại]
+  chi_phi_van_hanh:
+    label: Chi phí vận hành
+    model: chi_phi
+    sql: "SUM(k.amount)"
+    format: currency
+    owner: Phòng Kế toán
+    description: "Chi phí vận hành bưu cục theo tháng (nhân công, mặt bằng, nhiên liệu & xe, khác)."
+    synonyms: [chi phí vận hành, chi phí bưu cục, tổng chi phí, chi phí]
+  loi_nhuan_van_hanh:
+    label: Lợi nhuận vận hành
+    type: derived
+    expr: "{doanh_thu_cuoc} - {chi_phi_van_hanh}"
+    format: currency
+    owner: Phòng Kế toán
+    description: "Doanh thu cước ghi nhận trừ chi phí vận hành. Chỉ phân tích được theo tháng trở lên và theo bưu cục, tỉnh, miền."
+    synonyms: [lợi nhuận vận hành, lợi nhuận, lãi vận hành, lãi]
+  chi_phi_moi_don:
+    label: Chi phí vận hành trên mỗi vận đơn
+    type: derived
+    expr: "{chi_phi_van_hanh} / NULLIF({so_van_don}, 0)"
+    format: currency
+    owner: Phòng Kế toán
+    description: "Chi phí vận hành / số vận đơn."
+    synonyms: [chi phí mỗi đơn, chi phí trên mỗi vận đơn, chi phí trên mỗi đơn, chi phí bình quân mỗi đơn]
+
+nlu:
+  dim_priority: [mien, phan_khuc, dich_vu, tuyen, tinh, buu_cuc, loai_buu_cuc, loai_khieu_nai, loai_chi_phi, nganh_kh,
+                 nguoi_tra_cuoc, mien_phat, tinh_phat]
+  # "Nhanh", "Tiêu chuẩn", "Khác" là từ thông dụng; giá trị "Bưu cục" của loại bưu cục trùng với chính tên chiều
+  # bưu cục; mã trạng thái tiếng Anh không ai gõ trong câu hỏi
+  skip_bare_values: [dich_vu, trang_thai, loai_chi_phi, nganh_kh, loai_buu_cuc]
+  context_remap:           # "giao tới Miền Trung" là miền PHÁT, không phải miền gửi
+    - {dimension: mien, to: mien_phat, before_regex: '(giao|phat|gui|chuyen)( hang)? (toi|den|ve|vao|di)\s*$'}
+    - {dimension: tinh, to: tinh_phat, before_regex: '(giao|phat|gui|chuyen)( hang)? (toi|den|ve|vao|di)\s*$'}
+  value_aliases:
+    mien:
+      Miền Bắc: [mien bac, phia bac, khu vuc phia bac, khu vuc mien bac]
+      Miền Trung: [mien trung, khu vuc mien trung]
+      Miền Nam: [mien nam, phia nam, khu vuc phia nam, khu vuc mien nam]
+    tinh:
+      TP. Hồ Chí Minh: [tp hcm, tp.hcm, tphcm, ho chi minh, sai gon, thanh pho ho chi minh]
+    dich_vu:
+      Tiêu chuẩn: [dich vu tieu chuan, goi tieu chuan, giao tieu chuan, don tieu chuan]
+      Nhanh: [dich vu nhanh, goi nhanh, giao nhanh, don nhanh]
+      Hỏa tốc: [hoa toc, dich vu hoa toc, giao hoa toc, don hoa toc]
+      Hàng nặng: [hang nang, dich vu hang nang, hang cong kenh]
+    phan_khuc:
+      Cá nhân: [khach ca nhan, khach hang ca nhan, khach le]
+      Shop online: [shop, chu shop, khach shop, khach shop online, nguoi ban online]
+      Doanh nghiệp: [khach doanh nghiep, khach hang doanh nghiep, khach cong ty, b2b]
+    tuyen:
+      Nội miền: [noi mien, trong mien, tuyen noi mien]
+      Liên miền: [lien mien, khac mien, tuyen lien mien]
+    loai_buu_cuc:
+      Trung tâm chia chọn: [trung tam chia chon, cac trung tam chia chon]
+    loai_chi_phi:
+      Nhân công: [nhan cong, chi phi nhan cong, luong nhan vien]
+      Thuê mặt bằng: [thue mat bang, mat bang, chi phi mat bang]
+      Nhiên liệu & xe: [nhien lieu, xang xe, chi phi xe]
+
+analysis:
+  driver_dimensions: [mien, phan_khuc, dich_vu, tuyen, tinh, buu_cuc]
+  drill:
+    mien: [tinh, phan_khuc]
+    phan_khuc: [mien, nganh_kh]
+    dich_vu: [mien]
+    tuyen: [mien]
+    tinh: [buu_cuc]
+  decomposition:
+    doanh_thu_cuoc: &tach_don {count: so_van_don, units: khoi_luong, count_label: số vận đơn, value_label: cước trung bình mỗi đơn}
+    cuoc_phat_sinh: *tach_don
+
+ambiguities:
+  - id: revenue_definition
+    pref_key: revenue_metric
+    triggers: [doanh thu]
+    unless_any: [ghi nhận, phát sinh, thực thu, kế toán, doanh số]
+    question: "“Doanh thu” ở XYZ có hai cách tính. Bạn muốn dùng cách nào?"
+    options:
+      - {label: "Doanh thu cước ghi nhận (Kế toán) — chỉ đơn đã giao hoặc đã hoàn", metric: doanh_thu_cuoc}
+      - {label: "Cước phát sinh (Kinh doanh) — mọi vận đơn đã nhận, trừ đơn hủy", metric: cuoc_phat_sinh}
+  - id: volume_definition
+    pref_key: volume_metric
+    triggers: [sản lượng]
+    unless_any: [kg, khối lượng, số đơn, số vận đơn]
+    question: "“Sản lượng” có thể đếm theo số đơn hoặc theo cân nặng. Bạn muốn xem theo cách nào?"
+    options:
+      - {label: "Số vận đơn", metric: so_van_don}
+      - {label: "Khối lượng hàng (kg)", metric: khoi_luong}
+  - id: best_criteria
+    pref_key: best_criteria
+    triggers: [tốt nhất, hiệu quả nhất, kém nhất, tệ nhất, nổi bật nhất, dẫn đầu]
+    weak_triggers: [top]
+    requires_no_metric: true
+    question: "Bạn muốn xếp hạng theo tiêu chí nào?"
+    options:
+      - {label: "Số vận đơn", metric: so_van_don}
+      - {label: "Doanh thu cước ghi nhận", metric: doanh_thu_cuoc}
+      - {label: "Tỷ lệ giao đúng hạn", metric: ty_le_dung_han}
+      - {label: "Tỷ lệ giao thành công", metric: ty_le_giao_thanh_cong}

@@ -1,0 +1,90 @@
+# =====================================================================================
+# DATA CATALOG — Công ty CP Giao vận XYZ. Mô tả nghiệp vụ cho bảng/cột của schema mart.
+# Khung file do `python -m app.onboard` sinh (tên bảng, tên cột, cột nhạy cảm đoán theo tên); phần mô tả viết tay.
+# sensitivity: pii | confidential  -> bị chặn với vai trò analyst (xem policies.yml)
+# =====================================================================================
+
+lint:
+  required_filters:
+    - tables:
+        mart.fact_shipment: [shipping_fee, cod_amount, weight_kg]
+      column: status
+      message: "Tính tổng cước, tiền thu hộ hoặc khối lượng nhưng KHÔNG lọc trạng thái vận đơn — đang cộng cả đơn hủy và đơn chưa giao xong."
+      hint: "Theo semantic layer: doanh thu cước ghi nhận chỉ tính status IN ('DELIVERED', 'RETURNED'); cước phát sinh loại status = 'CANCELLED'."
+
+tables:
+  mart.fact_shipment:
+    description: "Vận đơn — mỗi dòng là một kiện hàng khách gửi. Bảng sự kiện chính, phân vùng theo created_date."
+    synonyms: [vận đơn, đơn hàng, bưu gửi, kiện hàng, đơn giao, shipment]
+    grain: "shipment_id"
+    columns:
+      shipment_id: {description: "Mã vận đơn"}
+      created_date: {description: "Ngày tạo vận đơn, tức ngày nhận hàng từ người gửi (cột phân vùng)", synonyms: [ngày gửi, ngày tạo đơn, ngày nhận hàng]}
+      delivered_date: {description: "Ngày kết thúc vận đơn: ngày giao thành công hoặc ngày hoàn về người gửi; NULL nếu chưa xong", synonyms: [ngày giao, ngày phát]}
+      origin_hub_id: {description: "Mã bưu cục gửi (nơi nhận hàng từ người gửi) -> mart.dim_hub"}
+      dest_hub_id: {description: "Mã bưu cục phát (nơi giao hàng cho người nhận) -> mart.dim_hub"}
+      customer_id: {description: "Mã khách hàng gửi -> mart.dim_customer"}
+      service_code: {description: "Mã dịch vụ: STD=Tiêu chuẩn, EXP=Nhanh, SDD=Hỏa tốc, BLK=Hàng nặng -> mart.dim_service"}
+      status: {description: "Trạng thái vận đơn: DELIVERED (giao thành công), RETURNED (hoàn về người gửi), CANCELLED (hủy trước khi lấy hàng), IN_TRANSIT (đang vận chuyển), LOST (thất lạc)"}
+      route_type: {description: "Loại tuyến: Nội miền (bưu cục gửi và phát cùng miền) hoặc Liên miền", synonyms: [tuyến]}
+      weight_kg: {description: "Khối lượng kiện hàng (kg)", synonyms: [khối lượng, cân nặng, trọng lượng]}
+      shipping_fee: {description: "Cước vận chuyển của vận đơn (VND); đơn hủy có cước bằng 0", synonyms: [cước, phí vận chuyển, cước phí]}
+      cod_amount: {description: "Tiền thu hộ người nhận (VND); 0 nếu đơn không thu hộ", synonyms: [tiền thu hộ, cod]}
+      delivery_hours: {description: "Số giờ từ lúc nhận hàng đến lúc kết thúc vận đơn; NULL nếu chưa xong", synonyms: [thời gian giao, số giờ giao]}
+      on_time: {description: "TRUE nếu đơn giao thành công trong thời gian cam kết của dịch vụ; chỉ có giá trị khi status = 'DELIVERED'", synonyms: [đúng hạn, đúng cam kết]}
+      attempts: {description: "Số lần phát hàng (đơn hoàn thường là 3 lần phát không thành công)", synonyms: [số lần giao, số lần phát]}
+      payer: {description: "Bên trả cước: Người gửi hoặc Người nhận"}
+  mart.fact_complaint:
+    description: "Khiếu nại của khách về một vận đơn. Bưu cục gửi là nơi tiếp nhận và chịu trách nhiệm xử lý."
+    synonyms: [khiếu nại, phản ánh, complaint]
+    grain: "complaint_id"
+    columns:
+      complaint_id: {description: "Mã khiếu nại"}
+      shipment_id: {description: "Mã vận đơn bị khiếu nại -> mart.fact_shipment"}
+      created_date: {description: "Ngày khách khiếu nại (cột phân vùng)", synonyms: [ngày khiếu nại]}
+      hub_id: {description: "Mã bưu cục tiếp nhận khiếu nại (là bưu cục gửi của vận đơn) -> mart.dim_hub"}
+      complaint_type: {description: "Loại khiếu nại: Giao trễ, Hư hỏng hàng, Thất lạc, Thái độ nhân viên, Sai tiền thu hộ", synonyms: [lý do khiếu nại]}
+      resolved_hours: {description: "Số giờ từ lúc tiếp nhận đến lúc xử lý xong khiếu nại"}
+      compensation_amount: {description: "Tiền bồi thường cho khách (VND); 0 nếu không bồi thường", synonyms: [bồi thường, đền bù]}
+  mart.fact_hub_cost:
+    description: "Chi phí vận hành của từng bưu cục theo tháng và theo khoản mục. Chỉ có độ chi tiết tháng."
+    synonyms: [chi phí vận hành, chi phí bưu cục]
+    grain: "month + hub_id + cost_type"
+    columns:
+      month: {description: "Tháng phát sinh chi phí (ngày đầu tháng)"}
+      hub_id: {description: "Mã bưu cục -> mart.dim_hub"}
+      cost_type: {description: "Khoản mục chi phí: Nhân công, Thuê mặt bằng, Nhiên liệu & xe, Khác"}
+      amount: {description: "Số tiền chi phí (VND)", synonyms: [chi phí]}
+  mart.dim_hub:
+    description: "Danh mục bưu cục và trung tâm chia chọn."
+    synonyms: [bưu cục, trung tâm chia chọn, điểm giao nhận, hub]
+    grain: "hub_id"
+    columns:
+      hub_id: {description: "Mã bưu cục"}
+      hub_name: {description: "Tên bưu cục", synonyms: [tên bưu cục]}
+      hub_type: {description: "Loại: Trung tâm chia chọn hoặc Bưu cục"}
+      province: {description: "Tỉnh/thành đặt bưu cục", synonyms: [tỉnh, thành phố]}
+      region: {description: "Miền: Miền Bắc, Miền Trung, Miền Nam", synonyms: [miền, vùng, khu vực]}
+      opened_date: {description: "Ngày khai trương"}
+      closed_date: {description: "Ngày đóng cửa; NULL nếu còn hoạt động", synonyms: [ngày đóng cửa, ngừng hoạt động]}
+  mart.dim_customer:
+    description: "Khách hàng gửi hàng."
+    synonyms: [khách hàng, người gửi, shop]
+    grain: "customer_id"
+    columns:
+      customer_id: {description: "Mã khách hàng"}
+      customer_name: {description: "Tên khách hàng hoặc tên shop, công ty", sensitivity: confidential}
+      segment: {description: "Phân khúc: Cá nhân, Shop online, Doanh nghiệp", synonyms: [phân khúc, nhóm khách hàng]}
+      industry: {description: "Ngành hàng kinh doanh của shop hoặc doanh nghiệp; NULL với khách cá nhân", synonyms: [ngành hàng]}
+      province: {description: "Tỉnh/thành của khách hàng"}
+      region: {description: "Miền của khách hàng"}
+      phone: {description: "Số điện thoại", sensitivity: pii}
+      joined_date: {description: "Ngày bắt đầu sử dụng dịch vụ"}
+  mart.dim_service:
+    description: "Danh mục dịch vụ chuyển phát và thời gian cam kết."
+    synonyms: [dịch vụ, gói dịch vụ, gói cước]
+    grain: "service_code"
+    columns:
+      service_code: {description: "Mã dịch vụ: STD, EXP, SDD, BLK"}
+      service_name: {description: "Tên dịch vụ: Tiêu chuẩn, Nhanh, Hỏa tốc, Hàng nặng", synonyms: [tên dịch vụ]}
+      sla_hours: {description: "Thời gian cam kết giao hàng (giờ)", synonyms: [cam kết, sla]}

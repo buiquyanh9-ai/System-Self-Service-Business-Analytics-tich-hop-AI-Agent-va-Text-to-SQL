@@ -1,0 +1,52 @@
+# =====================================================================================
+# HỒ SƠ DOANH NGHIỆP — Công ty CP Giao vận XYZ (doanh nghiệp mẫu thứ hai, dữ liệu giả lập).
+# Khởi tạo bằng `python -m app.onboard giaovan_xyz`, sau đó được rà soát và viết lại bằng tay.
+# Chạy:  WORKSPACE=giaovan_xyz python -m uvicorn app.main:app
+# =====================================================================================
+version: 1
+
+company:
+  name: Công ty CP Giao vận XYZ
+  short_name: XYZ
+  industry: chuyển phát hàng hóa
+  description: Doanh nghiệp chuyển phát phục vụ khách cá nhân, shop online và doanh nghiệp, với mạng lưới trung tâm chia chọn và bưu cục ở ba miền.
+
+assistant:
+  name: Trợ lý dữ liệu XYZ
+  language: Vietnamese
+
+warehouse:
+  engine: DuckDB
+  schema: mart
+  schema_note: "star schema: fact_* event tables and dim_* dimensions; column names are English while business terms are Vietnamese — always check descriptions"
+  anchor: {table: mart.fact_shipment, column: created_date}
+  core_tables: [mart.fact_shipment, mart.dim_hub, mart.dim_customer, mart.dim_service]
+  notes:
+    - "Time filters go on created_date with sargable ranges, e.g. s.created_date >= DATE 'YYYY-MM-DD' AND s.created_date < DATE 'YYYY-MM-DD'."
+    - "mart.fact_shipment joins mart.dim_hub twice: origin_hub_id is the sending hub (the default meaning of miền/tỉnh/bưu cục), dest_hub_id is the delivering hub."
+    - "Status values are English codes: DELIVERED, RETURNED, CANCELLED, IN_TRANSIT, LOST. Rates and revenue always state which statuses they count."
+    - "delivery_hours and on_time are only filled for finished shipments; on_time is only meaningful when status = 'DELIVERED'."
+    - "'doanh thu' without a qualifier is ambiguous (doanh_thu_cuoc vs cuoc_phat_sinh differ) and so is 'sản lượng' (so_van_don vs khoi_luong)."
+
+# Kiểm định chất lượng dữ liệu: trạng thái vận đơn có vòng đời (đơn mới luôn "đang vận chuyển") nên cơ cấu
+# 30 ngày gần nhất khác hẳn các tháng trước mà không phải lỗi dữ liệu -> không đem kiểm trôi lệch phân phối.
+quality:
+  skip_drift_columns: [status]
+
+out_of_scope:
+  - dự báo tương lai hay khuyến nghị đầu tư
+  - sửa, xóa dữ liệu (chỉ đọc)
+  - tra cứu hành trình của một vận đơn cụ thể theo thời gian thực
+  - trả số điện thoại, tên khách hàng hoặc cột bị hạn chế theo vai trò của bạn
+  - câu hỏi ngoài dữ liệu của doanh nghiệp
+
+sample_questions:
+  - Số vận đơn theo tháng năm 2026
+  - Tỷ lệ giao đúng hạn theo dịch vụ tháng 10/2026
+  - Top 5 bưu cục có số vận đơn cao nhất quý 3 năm 2026
+  - Doanh thu tháng trước theo miền
+  - Vì sao số vận đơn tháng 9/2026 giảm so với tháng 8/2026?
+  - Tỷ lệ hoàn theo phân khúc khách hàng năm 2026
+  - Số khiếu nại theo loại khiếu nại tháng 6/2026
+  - Lợi nhuận vận hành theo quý năm 2025
+  - Tỷ lệ giao đúng hạn là gì?

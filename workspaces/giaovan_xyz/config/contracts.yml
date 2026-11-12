@@ -1,0 +1,2 @@
+# Data contract: {bảng nguồn: [danh sách cột mong đợi]} để phát hiện schema drift. Để trống nếu chưa dùng.
+{}

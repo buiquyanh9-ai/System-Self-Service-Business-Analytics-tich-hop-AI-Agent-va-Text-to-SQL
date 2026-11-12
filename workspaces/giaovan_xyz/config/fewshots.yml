@@ -1,0 +1,28 @@
+# Ví dụ câu hỏi -> SQL đã xác nhận của XYZ: các câu semantic layer không diễn đạt được (xếp hạng theo thực thể,
+# danh sách có điều kiện). Dùng làm ví dụ trong prompt cho LLM và tái sử dụng khi câu hỏi gần như trùng.
+- question: "Top 10 khách hàng có doanh thu cước ghi nhận cao nhất năm 2025"
+  sql: |
+    SELECT s.customer_id, SUM(s.shipping_fee) AS doanh_thu_cuoc, COUNT(*) AS so_don
+    FROM mart.fact_shipment s
+    WHERE s.status IN ('DELIVERED', 'RETURNED')
+      AND s.created_date >= DATE '2025-01-01' AND s.created_date < DATE '2026-01-01'
+    GROUP BY s.customer_id
+    ORDER BY doanh_thu_cuoc DESC
+    LIMIT 10
+- question: "Những bưu cục khai trương trong năm 2024"
+  sql: |
+    SELECT h.hub_id, h.hub_name, h.province, h.opened_date
+    FROM mart.dim_hub h
+    WHERE h.opened_date >= DATE '2024-01-01' AND h.opened_date < DATE '2025-01-01'
+    ORDER BY h.opened_date
+- question: "Các tuyến tỉnh gửi tới tỉnh phát có nhiều vận đơn nhất tháng 10/2026"
+  sql: |
+    SELECT o.province AS tinh_gui, d.province AS tinh_phat, COUNT(*) AS so_van_don
+    FROM mart.fact_shipment s
+    JOIN mart.dim_hub o ON o.hub_id = s.origin_hub_id
+    JOIN mart.dim_hub d ON d.hub_id = s.dest_hub_id
+    WHERE s.status <> 'CANCELLED'
+      AND s.created_date >= DATE '2026-10-01' AND s.created_date < DATE '2026-11-01'
+    GROUP BY o.province, d.province
+    ORDER BY so_van_don DESC
+    LIMIT 10

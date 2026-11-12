@@ -1,0 +1,75 @@
+# =====================================================================================
+# GOVERNANCE — Công ty CP Giao vận XYZ: RBAC (vai trò) + RLS (lọc dòng theo miền) + giới hạn chi phí quét.
+# Tài khoản dưới đây chỉ để chạy thử trên dữ liệu giả lập; triển khai thật phải đổi mật khẩu.
+# =====================================================================================
+roles:
+  analyst:
+    label: Analyst (chỉ đọc)
+    statements: [SELECT]
+    schemas: [mart]
+    deny_sensitivity: [pii, confidential]
+    can_manage_schema: false
+    can_view_all_logs: false
+    cost:
+      warn_bytes: 20_000_000
+      approval_bytes: 60_000_000
+      max_bytes: 400_000_000
+    max_rows: 5000
+  admin:
+    label: Admin (quản trị schema)
+    statements: [SELECT]
+    schemas: [mart]
+    deny_sensitivity: []
+    can_manage_schema: true
+    can_view_all_logs: true
+    cost:
+      warn_bytes: 80_000_000
+      approval_bytes: 250_000_000
+      max_bytes: 2_000_000_000
+    max_rows: 20000
+
+hitl:
+  large_table_rows: 100000
+  hitl_min_bytes: 15_000_000
+
+# true = liệt kê các tài khoản dưới đây trên màn hình đăng nhập (chỉ dùng với dữ liệu giả lập)
+demo_login: true
+
+users:
+  admin:         {password: admin123,   role: admin,   full_name: "Quản trị dữ liệu"}
+  analyst:       {password: analyst123, role: analyst, full_name: "Chuyên viên phân tích (toàn quốc)"}
+  analyst_trung: {password: analyst123, role: analyst, full_name: "Chuyên viên Miền Trung", rls: {mien: ["Miền Trung"]}}
+
+# RLS theo miền của bưu cục gửi: người dùng có thuộc tính rls.mien chỉ thấy dữ liệu của miền mình.
+rls:
+  mien:
+    mart.dim_hub:        "region IN ({mien})"
+    mart.dim_customer:   "region IN ({mien})"
+    mart.fact_shipment:  "origin_hub_id IN (SELECT hub_id FROM mart.dim_hub WHERE region IN ({mien}))"
+    mart.fact_complaint: "hub_id IN (SELECT hub_id FROM mart.dim_hub WHERE region IN ({mien}))"
+    mart.fact_hub_cost:  "hub_id IN (SELECT hub_id FROM mart.dim_hub WHERE region IN ({mien}))"
+
+denied_functions:
+  - read_csv
+  - read_csv_auto
+  - read_parquet
+  - parquet_scan
+  - read_json
+  - read_json_auto
+  - read_json_objects
+  - read_text
+  - read_blob
+  - read_ndjson
+  - glob
+  - sniff_csv
+  - getenv
+  - current_setting
+  - duckdb_secrets
+  - duckdb_settings
+  - query
+  - query_table
+  - iceberg_scan
+  - delta_scan
+  - sqlite_scan
+  - postgres_scan
+  - mysql_scan
